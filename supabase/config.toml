@@ -1,0 +1,42 @@
+# Supabase CLI config. Only needed if you run the stack locally with Docker
+# (`supabase start`). Working straight against the hosted project is fine too —
+# `npm run db:push` applies migrations either way.
+
+project_id = "smart-mess"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+# Matches the hosted project (Postgres 17.6). Keep these in sync or the local
+# stack will behave differently from production.
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+# Off locally so you don't need a mail server to test signup.
+enable_confirmations = false
+
+# Google SSO. Enable it in the dashboard for the hosted project
+# (Authentication -> Providers -> Google) and set the redirect URL to
+# https://YOUR-PROJECT-REF.supabase.co/auth/v1/callback
+[auth.external.google]
+enabled = false
+client_id = "env(GOOGLE_CLIENT_ID)"
+secret = "env(GOOGLE_CLIENT_SECRET)"

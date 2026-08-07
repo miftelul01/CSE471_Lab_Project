@@ -13,6 +13,19 @@
 .env.local
 .env*.local
 
+# supabase cli
+/supabase/.temp/
+/supabase/.branches/
+
+# local editor / tooling config — never belongs in a shared repo, and these
+# files can capture command history containing credentials
+/.claude/
+/.vscode/
+/.idea/
+
+# assignment brief — not part of the application
+*.docx
+
 # misc
 .DS_Store
 *.pem
