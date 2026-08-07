@@ -1,32 +1,23 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+
+import { NavBar } from "@/components/NavBar";
+import { getSessionUser } from "@/lib/auth";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Smart Mess & Property Management System",
-  description: "Roommate & house matching, expenses, chores, and more.",
+  description:
+    "House and mess management: listings, roommate matching, shared wallet, meals, chores and conflict resolution.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const user = await getSessionUser();
+
   return (
     <html lang="en">
       <body>
-        <nav className="border-b bg-white px-6 py-4 flex gap-6 items-center">
-          <span className="font-semibold">Smart Mess</span>
-          <Link href="/preferences" className="text-sm text-slate-600 hover:text-slate-900">
-            My Preferences
-          </Link>
-          <Link href="/matches" className="text-sm text-slate-600 hover:text-slate-900">
-            Suggested Matches
-          </Link>
-          <Link href="/favorites" className="text-sm text-slate-600 hover:text-slate-900">
-            Favorites
-          </Link>
-          <Link href="/join-requests" className="text-sm text-slate-600 hover:text-slate-900">
-            Join Requests
-          </Link>
-        </nav>
-        <main className="max-w-4xl mx-auto px-6 py-8">{children}</main>
+        <NavBar user={user} />
+        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
       </body>
     </html>
   );

@@ -1,58 +1,58 @@
-"use client";
+import { JoinRequestList } from "./JoinRequestList";
+import { EmptyState, PageHeader } from "@/components/ui";
+import { requireUser } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import type { JoinRequest, Listing } from "@/lib/supabase/types";
 
-import { useEffect, useState } from "react";
-import { useCurrentUserId } from "@/lib/useCurrentUserId";
-import { UserIdBanner } from "@/components/UserIdBanner";
+export const metadata = { title: "Join requests — Smart Mess" };
 
-interface RequestRow {
-  id: string;
-  status: string;
-  createdAt: string;
-  listing: { id: string; title: string; area: string };
-}
+/**
+ * M1.2 — join requests (Mahia Tanzin).
+ *
+ * One query returns both "requests I sent" and "requests for my listings" —
+ * the RLS policy decides which rows you're entitled to, so the split below is
+ * purely presentational.
+ */
+export default async function JoinRequestsPage() {
+  const user = await requireUser();
+  const supabase = createClient();
 
-const STATUS_COLORS: Record<string, string> = {
-  PENDING: "bg-amber-100 text-amber-800",
-  ACCEPTED: "bg-green-100 text-green-800",
-  REJECTED: "bg-red-100 text-red-800",
-  WITHDRAWN: "bg-slate-100 text-slate-600",
-};
+  const { data } = await supabase
+    .from("join_requests")
+    .select("*, listings(*)")
+    .order("created_at", { ascending: false });
 
-export default function JoinRequestsPage() {
-  const { userId } = useCurrentUserId();
-  const [requests, setRequests] = useState<RequestRow[]>([]);
-
-  useEffect(() => {
-    if (!userId) return;
-    fetch(`/api/join-requests?userId=${userId}`)
-      .then((res) => res.json())
-      .then((data) => setRequests(data.requests ?? []));
-  }, [userId]);
+  const requests = (data as (JoinRequest & { listings: Listing | null })[] | null) ?? [];
+  const sent = requests.filter((r) => r.user_id === user.id);
+  const received = requests.filter((r) => r.user_id !== user.id);
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold mb-4">My Join Requests</h1>
-      <UserIdBanner />
+    <div className="space-y-8">
+      <div>
+        <PageHeader title="Requests I sent" />
+        {sent.length === 0 ? (
+          <EmptyState
+            title="No requests sent"
+            hint="Send one from your matches or saved listings."
+          />
+        ) : (
+          <JoinRequestList requests={sent} viewer="applicant" />
+        )}
+      </div>
 
-      {userId && requests.length === 0 && (
-        <p className="text-sm text-slate-500">
-          No join requests sent yet — send one from the Suggested Matches page.
-        </p>
-      )}
-
-      <ul className="space-y-3">
-        {requests.map((r) => (
-          <li key={r.id} className="rounded border bg-white p-4 flex justify-between items-center">
-            <div>
-              <p className="font-medium">{r.listing.title}</p>
-              <p className="text-sm text-slate-600">{r.listing.area}</p>
-            </div>
-            <span className={`rounded px-2 py-1 text-xs font-medium ${STATUS_COLORS[r.status]}`}>
-              {r.status}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {user.profile.role !== "RESIDENT" ? (
+        <div>
+          <PageHeader
+            title="Requests for my listings"
+            subtitle="Accepting a request is how you let someone into your house."
+          />
+          {received.length === 0 ? (
+            <EmptyState title="No incoming requests" />
+          ) : (
+            <JoinRequestList requests={received} viewer="landlord" />
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

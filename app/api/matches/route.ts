@@ -1,86 +1,89 @@
-import { NextRequest, NextResponse } from "next/server";
-import { connectToDatabase } from "@/lib/mongodb";
-import { Preference } from "@/models/Preference";
-import { Listing } from "@/models/Listing";
-import { Match } from "@/models/Match";
-import { runStableMatching, ResidentPreference, ListingInput } from "@/lib/matching";
+import { fromPostgrestError, ok, withUser } from "@/lib/api";
+import { runStableMatching, type ListingInput, type ResidentPreference } from "@/lib/matching";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
-// Re-runs the matching engine across ALL residents with a saved preference
-// profile and ALL active listings, persists the results, then returns the
-// requesting user's ranked matches. In production this run would likely be
-// a scheduled/background job rather than triggered per-request, but doing
-// it synchronously is simplest for a capstone-scale dataset.
-export async function GET(req: NextRequest) {
-  const userId = req.nextUrl.searchParams.get("userId");
-  if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 });
-  }
+// Uses cookies() for the session, so it can never be statically prerendered.
+export const dynamic = "force-dynamic";
 
-  await connectToDatabase();
+/**
+ * M1.2 — run the matching engine and return this user's ranked matches
+ * (Mahia Tanzin).
+ *
+ * Why the admin client: stable matching is a POOL-WIDE computation. To know
+ * whether you get your top-choice listing, the algorithm has to see every
+ * other applicant competing for the same rooms. RLS (correctly) hides other
+ * people's preference rows from you, so the read runs with the service role
+ * server-side. Nothing about other applicants is ever returned — only the
+ * requesting user's own matches are persisted and sent back.
+ *
+ * At capstone scale, running this per-request is fine. In production it would
+ * be a scheduled job that recomputes for everyone at once.
+ */
+export const GET = withUser(async (user) => {
+  const supabase = createClient();
+  const admin = createAdminClient();
 
-  const [preferences, listings] = await Promise.all([
-    Preference.find({}),
-    Listing.find({ isActive: true }),
+  const [{ data: preferences }, { data: listings }] = await Promise.all([
+    admin.from("preferences").select("*"),
+    admin.from("listings").select("*").eq("is_active", true),
   ]);
 
-  if (preferences.length === 0 || listings.length === 0) {
-    return NextResponse.json({ matches: [] });
+  if (!preferences?.length || !listings?.length) {
+    return ok({ matches: [] });
   }
 
   const residentInputs: ResidentPreference[] = preferences.map((p) => ({
-    userId: p.userId,
-    budgetMin: p.budgetMin,
-    budgetMax: p.budgetMax,
-    sleepSchedule: p.sleepSchedule,
+    userId: p.user_id,
+    budgetMin: Number(p.budget_min),
+    budgetMax: Number(p.budget_max),
+    sleepSchedule: p.sleep_schedule,
     cleanliness: p.cleanliness,
-    smokingOk: p.smokingOk,
-    petsOk: p.petsOk,
-    preferredArea: p.preferredArea,
+    smokingOk: p.smoking_ok,
+    petsOk: p.pets_ok,
+    preferredArea: p.preferred_area,
   }));
 
   const listingInputs: ListingInput[] = listings.map((l) => ({
-    listingId: l._id.toString(),
-    rent: l.rent,
+    listingId: l.id,
+    rent: Number(l.rent),
     area: l.area,
     capacity: l.capacity,
-    sleepSchedule: l.sleepSchedule,
-    cleanliness: l.cleanliness,
-    allowsSmoking: l.allowsSmoking,
-    allowsPets: l.allowsPets,
+    sleepSchedule: l.sleep_schedule ?? undefined,
+    cleanliness: l.cleanliness ?? undefined,
+    allowsSmoking: l.allows_smoking ?? undefined,
+    allowsPets: l.allows_pets ?? undefined,
   }));
 
   const results = runStableMatching(residentInputs, listingInputs);
 
-  // Persist: replace this user's previous match rows with the fresh run.
-  // (We recompute for everyone above so the algorithm sees the full pool,
-  // but only write rows for the requesting user to keep this endpoint cheap.)
-  const userResults = results
-    .filter((r) => r.userId === userId)
+  const mine = results
+    .filter((r) => r.userId === user.id)
     .sort((a, b) => b.compatibilityScore - a.compatibilityScore);
 
-  await Match.deleteMany({ userId });
-  await Match.insertMany(
-    userResults.map((r, index) => ({
-      userId: r.userId,
-      listingId: r.listingId,
-      compatibilityScore: r.compatibilityScore,
-      rank: index + 1,
-    }))
-  );
+  // Replace this user's cached matches with the fresh run. Both statements go
+  // through the user client, so RLS still guarantees we only touch our rows.
+  const { error: deleteError } = await supabase.from("matches").delete().eq("user_id", user.id);
+  if (deleteError) return fromPostgrestError(deleteError);
 
-  const matches = await Match.find({ userId })
-    .populate("listingId")
-    .sort({ rank: 1 });
+  if (mine.length > 0) {
+    const { error: insertError } = await supabase.from("matches").insert(
+      mine.map((r, index) => ({
+        user_id: user.id,
+        listing_id: r.listingId,
+        compatibility_score: r.compatibilityScore,
+        rank: index + 1,
+      }))
+    );
+    if (insertError) return fromPostgrestError(insertError);
+  }
 
-  const shaped = matches.map((m) => {
-    const json = m.toJSON() as any;
-    return {
-      id: json.id,
-      rank: json.rank,
-      compatibilityScore: json.compatibilityScore,
-      listing: json.listingId, // populated document, already transformed to {id, title, ...}
-    };
-  });
+  const { data, error } = await supabase
+    .from("matches")
+    .select("*, listings(*)")
+    .eq("user_id", user.id)
+    .order("rank", { ascending: true });
 
-  return NextResponse.json({ matches: shaped });
-}
+  if (error) return fromPostgrestError(error);
+  return ok({ matches: data });
+});

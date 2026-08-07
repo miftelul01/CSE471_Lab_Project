@@ -1,43 +1,51 @@
-import { NextRequest, NextResponse } from "next/server";
-import { connectToDatabase } from "@/lib/mongodb";
-import { Favorite } from "@/models/Favorite";
+import { badRequest, fromPostgrestError, ok, readJson, withUser } from "@/lib/api";
+import { createClient } from "@/lib/supabase/server";
 
-export async function GET(req: NextRequest) {
-  const userId = req.nextUrl.searchParams.get("userId");
-  if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 });
-  }
-  await connectToDatabase();
-  const favorites = await Favorite.find({ userId }).populate("listingId").sort({ createdAt: -1 });
-  const shaped = favorites.map((f) => {
-    const json = f.toJSON() as any;
-    return { id: json.id, listing: json.listingId };
-  });
-  return NextResponse.json({ favorites: shaped });
-}
+/** M1.2 — saved listings (Mahia Tanzin). Private to their owner via RLS. */
 
-export async function POST(req: NextRequest) {
-  const { userId, listingId } = await req.json();
-  if (!userId || !listingId) {
-    return NextResponse.json({ error: "userId and listingId are required" }, { status: 400 });
-  }
-  await connectToDatabase();
+// Uses cookies() for the session, so it can never be statically prerendered.
+export const dynamic = "force-dynamic";
 
-  const favorite = await Favorite.findOneAndUpdate(
-    { userId, listingId },
-    { userId, listingId },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
+export const GET = withUser(async (user) => {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("favorites")
+    .select("*, listings(*)")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
 
-  return NextResponse.json(favorite.toJSON(), { status: 201 });
-}
+  if (error) return fromPostgrestError(error);
+  return ok({ favorites: data });
+});
 
-export async function DELETE(req: NextRequest) {
-  const { userId, listingId } = await req.json();
-  if (!userId || !listingId) {
-    return NextResponse.json({ error: "userId and listingId are required" }, { status: 400 });
-  }
-  await connectToDatabase();
-  await Favorite.deleteOne({ userId, listingId });
-  return NextResponse.json({ success: true });
-}
+export const POST = withUser(async (user, req: Request) => {
+  const body = await readJson<{ listing_id: string }>(req);
+  if (!body?.listing_id) return badRequest("listing_id is required");
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("favorites")
+    // Saving twice is a no-op rather than a 400 — matches what the star button
+    // in the UI actually means.
+    .upsert({ user_id: user.id, listing_id: body.listing_id }, { onConflict: "user_id,listing_id" })
+    .select("*")
+    .single();
+
+  if (error) return fromPostgrestError(error);
+  return ok(data, 201);
+});
+
+export const DELETE = withUser(async (user, req: Request) => {
+  const listingId = new URL(req.url).searchParams.get("listing_id");
+  if (!listingId) return badRequest("listing_id query parameter is required");
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("favorites")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("listing_id", listingId);
+
+  if (error) return fromPostgrestError(error);
+  return ok({ removed: true });
+});

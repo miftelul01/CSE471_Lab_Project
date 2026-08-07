@@ -1,63 +1,45 @@
-"use client";
+import Link from "next/link";
 
-import { useEffect, useState } from "react";
-import { useCurrentUserId } from "@/lib/useCurrentUserId";
-import { UserIdBanner } from "@/components/UserIdBanner";
+import { FavoriteList } from "./FavoriteList";
+import { EmptyState, PageHeader } from "@/components/ui";
+import { requireUser } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import type { Favorite, Listing } from "@/lib/supabase/types";
 
-interface FavoriteRow {
-  id: string;
-  listing: { id: string; title: string; rent: number; area: string; roomType: string };
-}
+export const metadata = { title: "Favorites — Smart Mess" };
 
-export default function FavoritesPage() {
-  const { userId } = useCurrentUserId();
-  const [favorites, setFavorites] = useState<FavoriteRow[]>([]);
+/** M1.2 — saved listings (Mahia Tanzin). */
+export default async function FavoritesPage() {
+  const user = await requireUser();
+  const supabase = createClient();
 
-  function load() {
-    if (!userId) return;
-    fetch(`/api/favorites?userId=${userId}`)
-      .then((res) => res.json())
-      .then((data) => setFavorites(data.favorites ?? []));
-  }
+  const { data } = await supabase
+    .from("favorites")
+    .select("*, listings(*)")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
 
-  useEffect(load, [userId]);
-
-  async function remove(listingId: string) {
-    await fetch("/api/favorites", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, listingId }),
-    });
-    load();
-  }
+  const favorites = (data as (Favorite & { listings: Listing | null })[] | null) ?? [];
 
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-4">Favorites</h1>
-      <UserIdBanner />
-
-      {userId && favorites.length === 0 && (
-        <p className="text-sm text-slate-500">No favorites saved yet.</p>
+      <PageHeader
+        title="Saved listings"
+        subtitle={
+          <>
+            Shortlist from your{" "}
+            <Link href="/matches" className="underline">
+              suggested matches
+            </Link>
+            .
+          </>
+        }
+      />
+      {favorites.length === 0 ? (
+        <EmptyState title="Nothing saved yet" hint="Hit Save on a match to shortlist it here." />
+      ) : (
+        <FavoriteList favorites={favorites} />
       )}
-
-      <ul className="space-y-3">
-        {favorites.map((f) => (
-          <li key={f.id} className="rounded border bg-white p-4 flex justify-between items-center">
-            <div>
-              <p className="font-medium">{f.listing.title}</p>
-              <p className="text-sm text-slate-600">
-                {f.listing.area} · {f.listing.roomType} · ৳{f.listing.rent}/mo
-              </p>
-            </div>
-            <button
-              onClick={() => remove(f.listing.id)}
-              className="rounded border px-3 py-1 text-sm hover:bg-slate-50"
-            >
-              Remove
-            </button>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

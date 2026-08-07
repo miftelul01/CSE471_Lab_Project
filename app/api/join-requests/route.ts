@@ -1,75 +1,94 @@
-import { NextRequest, NextResponse } from "next/server";
-import { connectToDatabase } from "@/lib/mongodb";
-import { JoinRequest } from "@/models/JoinRequest";
-import { Listing } from "@/models/Listing";
+import { badRequest, forbidden, fromPostgrestError, ok, readJson, withUser } from "@/lib/api";
+import { createClient } from "@/lib/supabase/server";
+import type { JoinRequestStatus } from "@/lib/supabase/types";
 
-// GET: list join requests either sent by a resident (?userId=) or
-// received by a landlord for their listings (?landlordId=)
-export async function GET(req: NextRequest) {
-  const userId = req.nextUrl.searchParams.get("userId");
-  const landlordId = req.nextUrl.searchParams.get("landlordId");
+/**
+ * M1.2 — formal join requests (Mahia Tanzin).
+ *
+ * Two-sided: the applicant sees their own requests, the landlord sees requests
+ * against their listings. Both come back from the same SELECT because the RLS
+ * policy in migration 0003 already encodes exactly that rule — no extra
+ * filtering needed here.
+ */
 
-  await connectToDatabase();
+// Uses cookies() for the session, so it can never be statically prerendered.
+export const dynamic = "force-dynamic";
 
-  if (userId) {
-    const requests = await JoinRequest.find({ userId }).populate("listingId").sort({ createdAt: -1 });
-    const shaped = requests.map((r) => {
-      const json = r.toJSON() as any;
-      return { id: json.id, status: json.status, createdAt: json.createdAt, listing: json.listingId };
-    });
-    return NextResponse.json({ requests: shaped });
+export const GET = withUser(async () => {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("join_requests")
+    .select("*, listings(*)")
+    .order("created_at", { ascending: false });
+
+  if (error) return fromPostgrestError(error);
+  return ok({ requests: data });
+});
+
+export const POST = withUser(async (user, req: Request) => {
+  const body = await readJson<{ listing_id: string; message?: string }>(req);
+  if (!body?.listing_id) return badRequest("listing_id is required");
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("join_requests")
+    .insert({
+      user_id: user.id,
+      listing_id: body.listing_id,
+      message: body.message || null,
+      status: "PENDING",
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    // Blocked by join_requests_one_open_per_listing.
+    if (error.code === "23505") {
+      return badRequest("You already have a pending request for this listing.");
+    }
+    return fromPostgrestError(error);
   }
+  return ok(data, 201);
+});
 
-  if (landlordId) {
-    const listingIds = (await Listing.find({ landlordId }).select("_id")).map((l) => l._id);
-    const requests = await JoinRequest.find({ listingId: { $in: listingIds } })
-      .populate("listingId")
-      .sort({ createdAt: -1 });
-    const shaped = requests.map((r) => {
-      const json = r.toJSON() as any;
-      return { id: json.id, status: json.status, userId: json.userId, listing: json.listingId };
-    });
-    return NextResponse.json({ requests: shaped });
-  }
+const APPLICANT_ALLOWED: JoinRequestStatus[] = ["WITHDRAWN"];
+const LANDLORD_ALLOWED: JoinRequestStatus[] = ["ACCEPTED", "REJECTED"];
 
-  return NextResponse.json({ error: "userId or landlordId is required" }, { status: 400 });
-}
+/** Applicant withdraws; landlord accepts or rejects. */
+export const PATCH = withUser(async (user, req: Request) => {
+  const body = await readJson<{ id: string; status: JoinRequestStatus }>(req);
+  if (!body?.id || !body?.status) return badRequest("id and status are required");
 
-// POST: resident sends a formal join request for a listing
-export async function POST(req: NextRequest) {
-  const { userId, listingId, message } = await req.json();
-  if (!userId || !listingId) {
-    return NextResponse.json({ error: "userId and listingId are required" }, { status: 400 });
-  }
+  const supabase = createClient();
 
-  await connectToDatabase();
+  const { data: existing, error: fetchError } = await supabase
+    .from("join_requests")
+    .select("*, listings(landlord_id)")
+    .eq("id", body.id)
+    .maybeSingle();
 
-  const existing = await JoinRequest.findOne({ userId, listingId, status: "PENDING" });
-  if (existing) {
-    return NextResponse.json(
-      { error: "A pending join request for this listing already exists" },
-      { status: 409 }
+  if (fetchError) return fromPostgrestError(fetchError);
+  if (!existing) return badRequest("No such join request");
+
+  const isApplicant = existing.user_id === user.id;
+  const isLandlord = (existing.listings as { landlord_id: string } | null)?.landlord_id === user.id;
+
+  const allowed = isApplicant ? APPLICANT_ALLOWED : isLandlord ? LANDLORD_ALLOWED : [];
+  if (!allowed.includes(body.status)) {
+    return forbidden(
+      isApplicant
+        ? "As the applicant you can only withdraw a request."
+        : "Only the listing's landlord can accept or reject a request."
     );
   }
 
-  const joinRequest = await JoinRequest.create({ userId, listingId, message: message ?? null });
-  return NextResponse.json(joinRequest.toJSON(), { status: 201 });
-}
+  const { data, error } = await supabase
+    .from("join_requests")
+    .update({ status: body.status })
+    .eq("id", body.id)
+    .select("*")
+    .single();
 
-// PATCH: landlord accepts or rejects a pending request
-export async function PATCH(req: NextRequest) {
-  const { requestId, status } = await req.json();
-  if (!requestId || !["ACCEPTED", "REJECTED", "WITHDRAWN"].includes(status)) {
-    return NextResponse.json(
-      { error: "requestId and a valid status (ACCEPTED, REJECTED, WITHDRAWN) are required" },
-      { status: 400 }
-    );
-  }
-
-  await connectToDatabase();
-  const updated = await JoinRequest.findByIdAndUpdate(requestId, { status }, { new: true });
-  if (!updated) {
-    return NextResponse.json({ error: "Join request not found" }, { status: 404 });
-  }
-  return NextResponse.json(updated.toJSON());
-}
+  if (error) return fromPostgrestError(error);
+  return ok(data);
+});
