@@ -1,77 +1,73 @@
 import { redirect } from "next/navigation";
 
-import { createClient } from "@/lib/supabase/server";
-import type { House, HouseMember, Profile, UserRole } from "@/lib/supabase/types";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import type { House, HouseMember, User, UserRole } from "@prisma/client";
 
 /**
- * Session helpers shared by every feature. Use these instead of reading
- * `supabase.auth` directly — it keeps "who am I / which house am I in"
- * answered the same way across all nine features.
+ * Session helpers used by every page and route handler.
+ *
+ * Same shape as before the Prisma migration, so feature code that used
+ * requireUser()/getActiveHouseId() didn't need to change when the auth
+ * provider did.
  */
 
 export type SessionUser = {
   id: string;
   email: string;
-  profile: Profile;
+  /** Full row, for pages that need phone, emergency contacts, etc. */
+  profile: User;
 };
 
-/** Current user, or null if signed out. Safe to call from anywhere server-side. */
+/** Current user, or null when signed out. */
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const supabase = createClient();
+  const session = await auth();
+  if (!session?.user?.id) return null;
 
-  // getUser() revalidates the JWT with Supabase. Don't switch this to
-  // getSession(), which trusts a cookie the client could have tampered with.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
-
+  // The JWT carries id and role, but pages want the whole row, and reading it
+  // fresh means a profile edit shows up immediately rather than at token
+  // refresh.
+  const profile = await prisma.user.findUnique({ where: { id: session.user.id } });
   if (!profile) return null;
 
-  return { id: user.id, email: user.email ?? profile.email, profile };
+  return { id: profile.id, email: profile.email, profile };
 }
 
-/** Same as getSessionUser but redirects to /login when signed out. Use in pages. */
+/** Same, but redirects to /login when signed out. Use in pages. */
 export async function requireUser(): Promise<SessionUser> {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   return user;
 }
 
-/** Redirects unless the user holds one of `roles`. Use in landlord/admin pages. */
+/** Redirects unless the user holds one of `roles`. */
 export async function requireRole(...roles: UserRole[]): Promise<SessionUser> {
   const user = await requireUser();
   if (!roles.includes(user.profile.role)) redirect("/");
   return user;
 }
 
-export type MembershipWithHouse = HouseMember & { houses: House | null };
+export type MembershipWithHouse = HouseMember & { house: House };
 
-/** Every house the current user actively belongs to. */
+/** Every house the user actively belongs to. */
 export async function getMyHouses(userId: string): Promise<MembershipWithHouse[]> {
-  const supabase = createClient();
-  const { data } = await supabase
-    .from("house_members")
-    .select("*, houses(*)")
-    .eq("user_id", userId)
-    .eq("status", "ACTIVE")
-    .order("joined_at", { ascending: true });
-
-  return (data as MembershipWithHouse[] | null) ?? [];
+  return prisma.houseMember.findMany({
+    where: { userId, status: "ACTIVE" },
+    include: { house: true },
+    orderBy: { joinedAt: "asc" },
+  });
 }
 
 /**
  * The house a page should show data for. Most features are scoped to one
- * house; until a house-switcher UI exists, "first active membership" is the
- * agreed convention. Returns null if the user hasn't joined a house yet.
+ * house; until a house-switcher exists, "first active membership" is the
+ * agreed convention. Null when the user hasn't joined one.
  */
 export async function getActiveHouseId(userId: string): Promise<string | null> {
-  const houses = await getMyHouses(userId);
-  return houses[0]?.house_id ?? null;
+  const membership = await prisma.houseMember.findFirst({
+    where: { userId, status: "ACTIVE" },
+    orderBy: { joinedAt: "asc" },
+    select: { houseId: true },
+  });
+  return membership?.houseId ?? null;
 }

@@ -1,9 +1,9 @@
 "use client";
 
+import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { createClient } from "@/lib/supabase/client";
 import {
   Card,
   ErrorNote,
@@ -17,13 +17,12 @@ import {
 /**
  * Registration, Login & SSO (Common Workflow 1).
  *
- * Supabase Auth handles password hashing, email confirmation and the Google
- * OAuth dance. The profiles row is created by the on_auth_user_created trigger
- * in supabase/migrations/0001_core.sql, so there is nothing to do after signup.
+ * Sign-in goes through NextAuth. Registration doesn't — NextAuth has no
+ * concept of creating an account — so sign-up POSTs to /api/auth/register
+ * (which bcrypt-hashes the password) and then signs in with the same details.
  */
 export function LoginForm({ next }: { next: string }) {
   const router = useRouter();
-  const supabase = createClient();
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [fullName, setFullName] = useState("");
@@ -41,46 +40,39 @@ export function LoginForm({ next }: { next: string }) {
 
     try {
       if (mode === "signup") {
-        const { data, error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-          // Lands in raw_user_meta_data, which the DB trigger copies into profiles.
-          options: { data: { full_name: fullName } },
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: fullName, email, password }),
         });
-        if (signUpError) throw signUpError;
-
-        // No session means the project requires email confirmation first.
-        if (!data.session) {
-          setNotice("Check your email to confirm your account, then sign in.");
-          setMode("signin");
+        const body = await response.json();
+        if (!response.ok) {
+          setError(body.error ?? "Could not create your account");
           return;
         }
-      } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (signInError) throw signInError;
+        setNotice("Account created — signing you in…");
+      }
+
+      // redirect:false so we can show the error inline instead of NextAuth
+      // bouncing to its own error page.
+      const result = await signIn("credentials", { email, password, redirect: false });
+
+      if (result?.error) {
+        setError(
+          mode === "signup"
+            ? "Account created, but sign-in failed. Try signing in manually."
+            : "Wrong email or password."
+        );
+        return;
       }
 
       router.push(next);
-      router.refresh(); // re-render the server layout so the nav picks up the session
+      router.refresh(); // re-render the server layout so the nav sees the session
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in");
     } finally {
       setBusy(false);
     }
-  }
-
-  async function handleGoogle() {
-    setError(null);
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-      },
-    });
-    if (oauthError) setError(oauthError.message);
   }
 
   return (
@@ -107,13 +99,13 @@ export function LoginForm({ next }: { next: string }) {
           />
         </Field>
 
-        <Field label="Password" hint={mode === "signup" ? "At least 6 characters." : undefined}>
+        <Field label="Password" hint={mode === "signup" ? "At least 8 characters." : undefined}>
           <input
             type="password"
             className={inputClass}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            minLength={6}
+            minLength={mode === "signup" ? 8 : undefined}
             required
           />
         </Field>
@@ -132,7 +124,11 @@ export function LoginForm({ next }: { next: string }) {
         <span className="h-px flex-1 bg-slate-200" />
       </div>
 
-      <button type="button" onClick={handleGoogle} className={`${secondaryButtonClass} w-full`}>
+      <button
+        type="button"
+        onClick={() => signIn("google", { redirectTo: next })}
+        className={`${secondaryButtonClass} w-full`}
+      >
         Continue with Google
       </button>
 

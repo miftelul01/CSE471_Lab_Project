@@ -1,41 +1,30 @@
-import { badRequest, fromPostgrestError, ok, readJson, withUser } from "@/lib/api";
-import { createClient } from "@/lib/supabase/server";
-
-type JoinBody = { house_id: string };
+import { badRequest, ok, readJson, withUser } from "@/lib/api";
+import { prisma } from "@/lib/prisma";
 
 /**
  * Join a house by id.
  *
- * Joins are auto-approved for now (status ACTIVE) to keep the demo flow short.
- * If you want landlord approval, insert with status 'PENDING' here and let the
- * house admin flip it to 'ACTIVE' — the RLS policy already permits that.
+ * Auto-approved (status ACTIVE) to keep the demo flow short. For landlord
+ * approval, create with status PENDING and let the house admin flip it.
  */
+
+export const dynamic = "force-dynamic";
+
 export const POST = withUser(async (user, req: Request) => {
-  const body = await readJson<JoinBody>(req);
+  const body = await readJson<{ house_id: string }>(req);
   if (!body?.house_id) return badRequest("house_id is required");
 
-  const supabase = createClient();
+  const house = await prisma.house.findUnique({
+    where: { id: body.house_id },
+    select: { id: true },
+  });
+  if (!house) return badRequest("No house exists with that id.");
 
-  const { data, error } = await supabase
-    .from("house_members")
-    .upsert(
-      {
-        house_id: body.house_id,
-        user_id: user.id,
-        role: user.profile.role,
-        status: "ACTIVE",
-      },
-      { onConflict: "house_id,user_id" }
-    )
-    .select("*")
-    .single();
+  const membership = await prisma.houseMember.upsert({
+    where: { houseId_userId: { houseId: house.id, userId: user.id } },
+    create: { houseId: house.id, userId: user.id, role: user.profile.role, status: "ACTIVE" },
+    update: { status: "ACTIVE" },
+  });
 
-  // A bad uuid fails the foreign key rather than returning "not found", so
-  // translate that into something a user can act on.
-  if (error) {
-    if (error.code === "23503") return badRequest("No house exists with that id.");
-    return fromPostgrestError(error);
-  }
-
-  return ok(data, 201);
+  return ok(membership, 201);
 });

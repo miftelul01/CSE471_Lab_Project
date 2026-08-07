@@ -3,20 +3,17 @@ import Link from "next/link";
 import { MatchList } from "./MatchList";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "Suggested matches — Smart Mess" };
 
 /** M1.2 — suggested houses/roommates (Mahia Tanzin). */
 export default async function MatchesPage() {
   const user = await requireUser();
-  const supabase = createClient();
-
-  const { data: preference } = await supabase
-    .from("preferences")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const preference = await prisma.preference.findUnique({
+    where: { userId: user.id },
+    select: { userId: true },
+  });
 
   if (!preference) {
     return (
@@ -42,7 +39,7 @@ export default async function MatchesPage() {
     <div>
       <PageHeader
         title="Suggested matches"
-        subtitle="Ranked by compatibility, then resolved with a stable-matching pass so two people don't both get promised the same room."
+        subtitle="Ranked by compatibility, then resolved with a stable-matching pass so the same room is not promised to two people."
         action={
           <div className="flex gap-4 text-sm">
             <Link href="/preferences" className="text-slate-600 underline hover:text-slate-900">

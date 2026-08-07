@@ -1,38 +1,33 @@
-import { badRequest, fromPostgrestError, notImplemented, ok, withUser } from "@/lib/api";
+import { badRequest, notImplemented, ok, withUser } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { prisma } from "@/lib/prisma";
 
 /** M1.3 Guest Registration & Accountability Log — Md. Mahidul Alam Araf. */
 
-// Uses cookies() for the session, so it can never be statically prerendered.
 export const dynamic = "force-dynamic";
 
 export const GET = withUser(async (user) => {
   const houseId = await getActiveHouseId(user.id);
   if (!houseId) return badRequest("Join a house before using the guest log.");
 
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("guest_logs")
-    .select("*, profiles!guest_logs_host_user_id_fkey(full_name)")
-    .eq("house_id", houseId)
-    .order("checked_in_at", { ascending: false });
-
-  if (error) return fromPostgrestError(error);
-  return ok({ guests: data });
+  const guests = await prisma.guestLog.findMany({
+    where: { houseId },
+    include: { host: { select: { name: true } } },
+    orderBy: { checkedInAt: "desc" },
+  });
+  return ok({ guests });
 });
 
 /**
  * TODO (M1.3):
- *  1. Validate guest_name is present; purpose and expected_check_out optional.
- *  2. Insert with house_id from getActiveHouseId and host_user_id: user.id —
- *     the RLS policy requires both to match, so neither comes from the body.
- *  3. After insert, notify the house admin and set notified_admin_at.
+ *  1. Validate guestName is present; purpose and expectedCheckOut optional.
+ *  2. Create with houseId from getActiveHouseId and hostUserId: user.id.
+ *     Call assertHouseMember(user, houseId) from lib/authz.ts first — there is
+ *     no Row Level Security any more, so that check is the only thing stopping
+ *     someone logging a guest into a house they don't live in.
+ *  3. Notify the house admin, then set notifiedAdminAt so it fires once.
  */
 export const POST = withUser(async () => notImplemented("Guest check-in"));
 
-/**
- * TODO (M1.3): check-out. Update status to CHECKED_OUT and checked_out_at to
- * now(). The DB constraint rejects a check-out earlier than the check-in.
- */
+/** TODO (M1.3): check-out — set status CHECKED_OUT and checkedOutAt. */
 export const PATCH = withUser(async () => notImplemented("Guest check-out"));

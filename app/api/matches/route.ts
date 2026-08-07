@@ -1,47 +1,41 @@
-import { fromPostgrestError, ok, withUser } from "@/lib/api";
+import { ok, withUser } from "@/lib/api";
 import { runStableMatching, type ListingInput, type ResidentPreference } from "@/lib/matching";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
-
-// Uses cookies() for the session, so it can never be statically prerendered.
-export const dynamic = "force-dynamic";
+import { prisma } from "@/lib/prisma";
 
 /**
  * M1.2 — run the matching engine and return this user's ranked matches
  * (Mahia Tanzin).
  *
- * Why the admin client: stable matching is a POOL-WIDE computation. To know
- * whether you get your top-choice listing, the algorithm has to see every
- * other applicant competing for the same rooms. RLS (correctly) hides other
- * people's preference rows from you, so the read runs with the service role
- * server-side. Nothing about other applicants is ever returned — only the
- * requesting user's own matches are persisted and sent back.
+ * Stable matching is a POOL-WIDE computation: to know whether you get your
+ * top-choice listing, the algorithm has to see every other applicant competing
+ * for the same rooms. It therefore reads every preference row server-side.
+ * Nothing about other applicants is ever returned — only the requesting user's
+ * own matches are persisted and sent back.
  *
- * At capstone scale, running this per-request is fine. In production it would
- * be a scheduled job that recomputes for everyone at once.
+ * Under Supabase this needed the service-role client to get past RLS. Prisma
+ * has no per-user filtering to bypass, which means the "only ever return my
+ * own rows" discipline below is now the only thing keeping the rest private.
  */
-export const GET = withUser(async (user) => {
-  const supabase = createClient();
-  const admin = createAdminClient();
 
-  const [{ data: preferences }, { data: listings }] = await Promise.all([
-    admin.from("preferences").select("*"),
-    admin.from("listings").select("*").eq("is_active", true),
+export const dynamic = "force-dynamic";
+
+export const GET = withUser(async (user) => {
+  const [preferences, listings] = await Promise.all([
+    prisma.preference.findMany(),
+    prisma.listing.findMany({ where: { isActive: true } }),
   ]);
 
-  if (!preferences?.length || !listings?.length) {
-    return ok({ matches: [] });
-  }
+  if (preferences.length === 0 || listings.length === 0) return ok({ matches: [] });
 
   const residentInputs: ResidentPreference[] = preferences.map((p) => ({
-    userId: p.user_id,
-    budgetMin: Number(p.budget_min),
-    budgetMax: Number(p.budget_max),
-    sleepSchedule: p.sleep_schedule,
+    userId: p.userId,
+    budgetMin: Number(p.budgetMin),
+    budgetMax: Number(p.budgetMax),
+    sleepSchedule: p.sleepSchedule,
     cleanliness: p.cleanliness,
-    smokingOk: p.smoking_ok,
-    petsOk: p.pets_ok,
-    preferredArea: p.preferred_area,
+    smokingOk: p.smokingOk,
+    petsOk: p.petsOk,
+    preferredArea: p.preferredArea,
   }));
 
   const listingInputs: ListingInput[] = listings.map((l) => ({
@@ -49,41 +43,36 @@ export const GET = withUser(async (user) => {
     rent: Number(l.rent),
     area: l.area,
     capacity: l.capacity,
-    sleepSchedule: l.sleep_schedule ?? undefined,
+    sleepSchedule: l.sleepSchedule ?? undefined,
     cleanliness: l.cleanliness ?? undefined,
-    allowsSmoking: l.allows_smoking ?? undefined,
-    allowsPets: l.allows_pets ?? undefined,
+    allowsSmoking: l.allowsSmoking ?? undefined,
+    allowsPets: l.allowsPets ?? undefined,
   }));
 
   const results = runStableMatching(residentInputs, listingInputs);
-
   const mine = results
     .filter((r) => r.userId === user.id)
     .sort((a, b) => b.compatibilityScore - a.compatibilityScore);
 
-  // Replace this user's cached matches with the fresh run. Both statements go
-  // through the user client, so RLS still guarantees we only touch our rows.
-  const { error: deleteError } = await supabase.from("matches").delete().eq("user_id", user.id);
-  if (deleteError) return fromPostgrestError(deleteError);
-
-  if (mine.length > 0) {
-    const { error: insertError } = await supabase.from("matches").insert(
-      mine.map((r, index) => ({
-        user_id: user.id,
-        listing_id: r.listingId,
-        compatibility_score: r.compatibilityScore,
+  // Replace this user's cached matches with the fresh run, atomically — a
+  // failure part-way would otherwise leave them with no matches at all.
+  await prisma.$transaction([
+    prisma.match.deleteMany({ where: { userId: user.id } }),
+    prisma.match.createMany({
+      data: mine.map((r, index) => ({
+        userId: user.id,
+        listingId: r.listingId,
+        compatibilityScore: r.compatibilityScore,
         rank: index + 1,
-      }))
-    );
-    if (insertError) return fromPostgrestError(insertError);
-  }
+      })),
+    }),
+  ]);
 
-  const { data, error } = await supabase
-    .from("matches")
-    .select("*, listings(*)")
-    .eq("user_id", user.id)
-    .order("rank", { ascending: true });
+  const matches = await prisma.match.findMany({
+    where: { userId: user.id },
+    include: { listing: true },
+    orderBy: { rank: "asc" },
+  });
 
-  if (error) return fromPostgrestError(error);
-  return ok({ matches: data });
+  return ok({ matches });
 });

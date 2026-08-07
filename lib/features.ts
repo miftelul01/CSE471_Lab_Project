@@ -6,6 +6,8 @@
  * `status` to "done" here — that is the whole handover ritual.
  */
 
+import type { UserRole } from "@prisma/client";
+
 export type FeatureStatus = "done" | "in-progress" | "todo";
 
 export type Feature = {
@@ -22,6 +24,8 @@ export type Feature = {
   /** Tables it owns in supabase/migrations/. */
   tables: string[];
   status: FeatureStatus;
+  /** Hide from the nav and dashboard unless the user holds this role. */
+  requiresRole?: UserRole;
 };
 
 export const OWNERS = {
@@ -58,11 +62,28 @@ export const FEATURES: Feature[] = [
     title: "My Houses",
     owner: OWNERS.shared,
     summary:
-      "Create or join a house. Membership is what every other feature scopes its data by, and it is what flips a user's role.",
+      "Create or join a house. Accepting a join request automatically admits the applicant, which is what scopes every other feature's data to them.",
     href: "/houses",
-    api: ["app/api/houses/route.ts"],
+    api: ["app/api/houses/route.ts", "app/api/houses/join/route.ts"],
     tables: ["houses", "house_members"],
     status: "done",
+  },
+  {
+    id: "C3",
+    module: 0,
+    title: "Admin Console",
+    owner: OWNERS.shared,
+    summary:
+      "Platform monitoring across every house, resolution of escalated Mess Court disputes, user role management, and overarching platform settings.",
+    href: "/admin",
+    api: [
+      "app/api/admin/users/route.ts",
+      "app/api/admin/disputes/route.ts",
+      "app/api/admin/settings/route.ts",
+    ],
+    tables: ["platform_settings", "profiles", "disputes"],
+    status: "done",
+    requiresRole: "ADMIN",
   },
 
   // ── Module 1 ──────────────────────────────────────────────────────────────
@@ -76,7 +97,7 @@ export const FEATURES: Feature[] = [
     href: "/listings",
     api: ["app/api/listings/route.ts", "app/api/listings/[id]/route.ts"],
     tables: ["listings"],
-    status: "todo",
+    status: "done",
   },
   {
     id: "M1.2",
@@ -229,4 +250,13 @@ export function getFeature(id: string): Feature {
 
 export function featuresByModule(module: Feature["module"]): Feature[] {
   return FEATURES.filter((f) => f.module === module);
+}
+
+/**
+ * Features a given role may see. This is presentation only — hiding a link is
+ * not access control. The admin console is guarded server-side by
+ * requireRole("ADMIN") in app/admin/layout.tsx and by withAdmin() on its routes.
+ */
+export function visibleFeatures(role: UserRole | null): Feature[] {
+  return FEATURES.filter((feature) => !feature.requiresRole || feature.requiresRole === role);
 }

@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Badge, Card, ErrorNote, buttonClass, secondaryButtonClass } from "@/components/ui";
-import type { JoinRequest, JoinRequestStatus, Listing } from "@/lib/supabase/types";
+import type { JoinRequest, JoinRequestStatus, Listing } from "@prisma/client";
 
-type RequestWithListing = JoinRequest & { listings: Listing | null };
+type RequestWithListing = JoinRequest & { listing: Listing | null };
 
 const STATUS_TONE: Record<JoinRequestStatus, "amber" | "green" | "red" | "slate"> = {
   PENDING: "amber",
@@ -51,11 +51,11 @@ export function JoinRequestList({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className="font-medium text-slate-900">
-                {request.listings?.title ?? "Listing removed"}
+                {request.listing?.title ?? "Listing removed"}
               </h3>
               <p className="text-sm text-slate-600">
-                {request.listings ? `${request.listings.area} · BDT ` : ""}
-                {request.listings ? Number(request.listings.rent).toLocaleString() : ""}
+                {request.listing ? `${request.listing.area} · BDT ` : ""}
+                {request.listing ? Number(request.listing.rent).toLocaleString() : ""}
               </p>
               {request.message ? (
                 <p className="mt-2 text-sm text-slate-500">&ldquo;{request.message}&rdquo;</p>

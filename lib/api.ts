@@ -1,13 +1,13 @@
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
-import type { PostgrestError } from "@supabase/supabase-js";
 
 import { getSessionUser, type SessionUser } from "@/lib/auth";
+import { AuthzError } from "@/lib/authz";
 
 /**
- * Shared helpers for Route Handlers under app/api/.
+ * Shared helpers for the route handlers under app/api/.
  *
- * Every endpoint in this project returns the same shapes so the frontend can
- * handle them uniformly:
+ * Every endpoint returns the same shapes:
  *   success -> the payload as JSON
  *   failure -> { error: string, details?: unknown }
  */
@@ -35,28 +35,33 @@ export const notImplemented = (feature: string) =>
     { status: 501 }
   );
 
-/** Turns a Supabase error into the right HTTP response. */
-export function fromPostgrestError(error: PostgrestError) {
-  // 23505 = unique_violation, 23503 = foreign_key_violation, 23514 = check_violation
-  if (["23505", "23503", "23514"].includes(error.code)) {
-    return badRequest(error.message, { code: error.code, hint: error.hint });
+/** Turns a Prisma error into the right HTTP response. */
+export function fromPrismaError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    switch (error.code) {
+      case "P2002": // unique constraint
+        return badRequest("That already exists.", { code: error.code, target: error.meta?.target });
+      case "P2003": // foreign key constraint
+        return badRequest("That refers to something which doesn't exist.", { code: error.code });
+      case "P2025": // record not found
+        return notFound("Not found");
+      default:
+        return serverError(error.message, { code: error.code });
+    }
   }
-  // 42501 = insufficient_privilege — almost always a Row Level Security policy.
-  if (error.code === "42501") {
-    return forbidden("Blocked by a Row Level Security policy — check supabase/migrations/");
+  // Raised by our own CHECK constraints and triggers — most importantly the
+  // Mess Court state machine, whose message names the illegal transition.
+  if (error instanceof Prisma.PrismaClientUnknownRequestError) {
+    return badRequest(error.message.split("\n").pop() ?? "Database rejected that change.");
   }
-  return serverError(error.message, { code: error.code });
+  return null;
 }
 
 /**
- * Wraps a handler so it always has a logged-in user and never leaks a stack
- * trace. Use it for every authenticated endpoint:
+ * Wraps a handler so it always has a logged-in user, converts authorization
+ * failures into the right status, and never leaks a stack trace.
  *
- *   export const GET = withUser(async (user, req) => {
- *     const supabase = createClient();
- *     ...
- *     return ok({ items });
- *   });
+ *   export const GET = withUser(async (user, req) => ok({ ... }));
  */
 export function withUser<Args extends unknown[]>(
   handler: (user: SessionUser, ...args: Args) => Promise<NextResponse>
@@ -67,10 +72,30 @@ export function withUser<Args extends unknown[]>(
       if (!user) return unauthorized();
       return await handler(user, ...args);
     } catch (err) {
+      // Thrown by lib/authz.ts — the application-level replacement for the
+      // Row Level Security policies the database used to enforce.
+      if (err instanceof AuthzError) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      const prismaResponse = fromPrismaError(err);
+      if (prismaResponse) return prismaResponse;
+
       console.error("[api]", err);
       return serverError(err instanceof Error ? err.message : "Unexpected error");
     }
   };
+}
+
+/** Like withUser, but also requires the platform ADMIN role. */
+export function withAdmin<Args extends unknown[]>(
+  handler: (user: SessionUser, ...args: Args) => Promise<NextResponse>
+) {
+  return withUser<Args>(async (user, ...args) => {
+    if (user.profile.role !== "ADMIN") {
+      return forbidden("This area is restricted to platform administrators.");
+    }
+    return handler(user, ...args);
+  });
 }
 
 /** Reads and JSON-parses a request body, returning null on malformed input. */

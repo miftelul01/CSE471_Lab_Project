@@ -1,34 +1,25 @@
-import { badRequest, fromPostgrestError, notImplemented, ok, withUser } from "@/lib/api";
+import { badRequest, notImplemented, ok, withUser } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { prisma } from "@/lib/prisma";
 
 /** M3.4 Automated Chore Rotation — Mahia Tanzin. */
 
-// Uses cookies() for the session, so it can never be statically prerendered.
 export const dynamic = "force-dynamic";
 
 export const GET = withUser(async (user) => {
   const houseId = await getActiveHouseId(user.id);
   if (!houseId) return badRequest("Join a house before setting up chores.");
 
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("chores")
-    .select("*, chore_assignments(*, profiles(full_name))")
-    .eq("house_id", houseId)
-    .eq("is_active", true)
-    .order("created_at", { ascending: true });
-
-  if (error) return fromPostgrestError(error);
-  return ok({ chores: data });
+  const chores = await prisma.chore.findMany({
+    where: { houseId, isActive: true },
+    include: { assignments: { include: { user: { select: { id: true, name: true } } } } },
+    orderBy: { createdAt: "asc" },
+  });
+  return ok({ chores });
 });
 
-/**
- * TODO (M3.4): create a chore. rotation_order is an ordered array of profile
- * ids — default it to the house's active members. Only house admins may write
- * here (RLS enforces it).
- */
+/** TODO (M3.4): create a chore; default rotationOrder to active house members. */
 export const POST = withUser(async () => notImplemented("Creating chores"));
 
-/** TODO (M3.4): mark an assignment COMPLETED (assignee or house admin). */
+/** TODO (M3.4): mark an assignment COMPLETED (assignee or house admin only). */
 export const PATCH = withUser(async () => notImplemented("Completing a chore"));

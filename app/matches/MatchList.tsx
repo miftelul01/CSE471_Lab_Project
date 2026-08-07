@@ -10,9 +10,9 @@ import {
   buttonClass,
   secondaryButtonClass,
 } from "@/components/ui";
-import type { Listing, Match } from "@/lib/supabase/types";
+import type { Listing, Match } from "@prisma/client";
 
-type MatchWithListing = Match & { listings: Listing | null };
+type MatchWithListing = Match & { listing: Listing | null };
 
 export function MatchList() {
   const [matches, setMatches] = useState<MatchWithListing[]>([]);
@@ -69,19 +69,19 @@ export function MatchList() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {matches.map((match) => {
-            const listing = match.listings;
+            const listing = match.listing;
             if (!listing) return null;
             return (
               <Card key={match.id}>
                 <div className="mb-1 flex items-start justify-between gap-2">
                   <h2 className="font-medium text-slate-900">{listing.title}</h2>
-                  <Badge tone={match.compatibility_score >= 0.8 ? "green" : "slate"}>
-                    {Math.round(match.compatibility_score * 100)}% match
+                  <Badge tone={Number(match.compatibilityScore) >= 0.8 ? "green" : "slate"}>
+                    {Math.round(Number(match.compatibilityScore) * 100)}% match
                   </Badge>
                 </div>
                 <p className="text-sm text-slate-600">
                   BDT {Number(listing.rent).toLocaleString()}/month · {listing.area} ·{" "}
-                  {listing.room_type.toLowerCase().replace("_", " ")}
+                  {listing.roomType.toLowerCase().replace("_", " ")}
                 </p>
                 <p className="mt-2 line-clamp-2 text-sm text-slate-500">{listing.description}</p>
 
