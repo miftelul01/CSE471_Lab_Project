@@ -1,40 +1,40 @@
-import { badRequest, fromPostgrestError, notImplemented, ok, withUser } from "@/lib/api";
+import { badRequest, notImplemented, ok, withUser } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { prisma } from "@/lib/prisma";
+import type { TicketStatus } from "@prisma/client";
 
 /** M3.1 Maintenance Ticket System — Miftelul Mehebub. */
 
-// Uses cookies() for the session, so it can never be statically prerendered.
 export const dynamic = "force-dynamic";
 
 export const GET = withUser(async (user, req: Request) => {
   const houseId = await getActiveHouseId(user.id);
   if (!houseId) return badRequest("Join a house before reporting maintenance issues.");
 
-  const status = new URL(req.url).searchParams.get("status");
-  const supabase = createClient();
+  const status = new URL(req.url).searchParams.get("status") as TicketStatus | null;
 
-  let query = supabase
-    .from("maintenance_tickets")
-    .select("*, maintenance_ticket_events(*)")
-    .eq("house_id", houseId);
-
-  if (status) query = query.eq("status", status as never);
-
-  const { data, error } = await query.order("created_at", { ascending: false });
-  if (error) return fromPostgrestError(error);
-  return ok({ tickets: data });
+  const tickets = await prisma.maintenanceTicket.findMany({
+    where: { houseId, ...(status ? { status } : {}) },
+    include: {
+      events: { orderBy: { createdAt: "asc" } },
+      reportedBy: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  return ok({ tickets });
 });
 
 /**
- * TODO (M3.1): insert a ticket with reported_by: user.id and house_id from
- * getActiveHouseId (RLS requires both). Status defaults to OPEN and the
- * "Ticket created" history row is written by a trigger.
+ * TODO (M3.1): create a ticket with reportedById: user.id and houseId from
+ * getActiveHouseId, after assertHouseMember(). Status defaults to OPEN.
+ *
+ * NOTE: the history row is no longer written by a database trigger. The
+ * trigger used auth.uid() to record who acted, which Prisma can't provide, so
+ * create the MaintenanceTicketEvent yourself inside the same
+ * prisma.$transaction as the ticket change — that keeps it atomic AND records
+ * a real actor. resolvedAt is still stamped by a trigger.
  */
 export const POST = withUser(async () => notImplemented("Reporting a maintenance ticket"));
 
-/**
- * TODO (M3.1): update status / assigned_to. Nothing to log by hand — the
- * maintenance_tickets_log_status trigger appends the history row for you.
- */
+/** TODO (M3.1): update status/assignee, writing a MaintenanceTicketEvent too. */
 export const PATCH = withUser(async () => notImplemented("Updating a ticket"));

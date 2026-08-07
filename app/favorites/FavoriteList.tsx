@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, buttonClass, secondaryButtonClass } from "@/components/ui";
-import type { Favorite, Listing } from "@/lib/supabase/types";
+import type { Favorite, Listing } from "@prisma/client";
 
-type FavoriteWithListing = Favorite & { listings: Listing | null };
+type FavoriteWithListing = Favorite & { listing: Listing | null };
 
 export function FavoriteList({ favorites }: { favorites: FavoriteWithListing[] }) {
   const router = useRouter();
@@ -45,7 +45,7 @@ export function FavoriteList({ favorites }: { favorites: FavoriteWithListing[] }
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       <div className="grid gap-3 sm:grid-cols-2">
         {favorites.map((favorite) => {
-          const listing = favorite.listings;
+          const listing = favorite.listing;
           if (!listing) return null;
           return (
             <Card key={favorite.id}>

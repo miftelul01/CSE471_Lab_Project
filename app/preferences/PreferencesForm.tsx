@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, Field, SuccessNote, buttonClass, inputClass } from "@/components/ui";
-import type { CleanlinessLevel, Preference, SleepSchedule } from "@/lib/supabase/types";
+import type { CleanlinessLevel, Preference, SleepSchedule } from "@prisma/client";
 
 const SLEEP_OPTIONS: { value: SleepSchedule; label: string }[] = [
   { value: "EARLY_BIRD", label: "Early bird — asleep before midnight" },
@@ -22,13 +22,13 @@ const CLEAN_OPTIONS: { value: CleanlinessLevel; label: string }[] = [
 export function PreferencesForm({ preference }: { preference: Preference | null }) {
   const router = useRouter();
   const [form, setForm] = useState({
-    budget_min: preference?.budget_min?.toString() ?? "5000",
-    budget_max: preference?.budget_max?.toString() ?? "15000",
-    sleep_schedule: preference?.sleep_schedule ?? ("FLEXIBLE" as SleepSchedule),
+    budgetMin: preference?.budgetMin?.toString() ?? "5000",
+    budgetMax: preference?.budgetMax?.toString() ?? "15000",
+    sleepSchedule: preference?.sleepSchedule ?? ("FLEXIBLE" as SleepSchedule),
     cleanliness: preference?.cleanliness ?? ("MODERATE" as CleanlinessLevel),
-    smoking_ok: preference?.smoking_ok ?? false,
-    pets_ok: preference?.pets_ok ?? false,
-    preferred_area: preference?.preferred_area ?? "",
+    smokingOk: preference?.smokingOk ?? false,
+    petsOk: preference?.petsOk ?? false,
+    preferredArea: preference?.preferredArea ?? "",
   });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -45,8 +45,8 @@ export function PreferencesForm({ preference }: { preference: Preference | null 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...form,
-        budget_min: Number(form.budget_min),
-        budget_max: Number(form.budget_max),
+        budgetMin: Number(form.budgetMin),
+        budgetMax: Number(form.budgetMax),
       }),
     });
     const body = await res.json();
@@ -69,8 +69,8 @@ export function PreferencesForm({ preference }: { preference: Preference | null 
               type="number"
               min={0}
               className={inputClass}
-              value={form.budget_min}
-              onChange={(e) => setForm({ ...form, budget_min: e.target.value })}
+              value={form.budgetMin}
+              onChange={(e) => setForm({ ...form, budgetMin: e.target.value })}
               required
             />
           </Field>
@@ -79,8 +79,8 @@ export function PreferencesForm({ preference }: { preference: Preference | null 
               type="number"
               min={0}
               className={inputClass}
-              value={form.budget_max}
-              onChange={(e) => setForm({ ...form, budget_max: e.target.value })}
+              value={form.budgetMax}
+              onChange={(e) => setForm({ ...form, budgetMax: e.target.value })}
               required
             />
           </Field>
@@ -89,8 +89,8 @@ export function PreferencesForm({ preference }: { preference: Preference | null 
         <Field label="Sleep schedule">
           <select
             className={inputClass}
-            value={form.sleep_schedule}
-            onChange={(e) => setForm({ ...form, sleep_schedule: e.target.value as SleepSchedule })}
+            value={form.sleepSchedule}
+            onChange={(e) => setForm({ ...form, sleepSchedule: e.target.value as SleepSchedule })}
           >
             {SLEEP_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -117,8 +117,8 @@ export function PreferencesForm({ preference }: { preference: Preference | null 
         <Field label="Preferred area" hint="Leave blank if you're open to anywhere.">
           <input
             className={inputClass}
-            value={form.preferred_area}
-            onChange={(e) => setForm({ ...form, preferred_area: e.target.value })}
+            value={form.preferredArea}
+            onChange={(e) => setForm({ ...form, preferredArea: e.target.value })}
             placeholder="Bashundhara"
           />
         </Field>
@@ -127,16 +127,16 @@ export function PreferencesForm({ preference }: { preference: Preference | null 
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input
               type="checkbox"
-              checked={form.smoking_ok}
-              onChange={(e) => setForm({ ...form, smoking_ok: e.target.checked })}
+              checked={form.smokingOk}
+              onChange={(e) => setForm({ ...form, smokingOk: e.target.checked })}
             />
             Smoking is OK
           </label>
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input
               type="checkbox"
-              checked={form.pets_ok}
-              onChange={(e) => setForm({ ...form, pets_ok: e.target.checked })}
+              checked={form.petsOk}
+              onChange={(e) => setForm({ ...form, petsOk: e.target.checked })}
             />
             Pets are OK
           </label>

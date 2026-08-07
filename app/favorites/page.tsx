@@ -3,23 +3,19 @@ import Link from "next/link";
 import { FavoriteList } from "./FavoriteList";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
-import type { Favorite, Listing } from "@/lib/supabase/types";
+import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "Favorites — Smart Mess" };
 
-/** M1.2 — saved listings (Mahia Tanzin). */
+/** M1.2 — saved listings (Mahia Tanzin). Private to their owner. */
 export default async function FavoritesPage() {
   const user = await requireUser();
-  const supabase = createClient();
 
-  const { data } = await supabase
-    .from("favorites")
-    .select("*, listings(*)")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
-
-  const favorites = (data as (Favorite & { listings: Listing | null })[] | null) ?? [];
+  const favorites = await prisma.favorite.findMany({
+    where: { userId: user.id },
+    include: { listing: true },
+    orderBy: { createdAt: "desc" },
+  });
 
   return (
     <div>

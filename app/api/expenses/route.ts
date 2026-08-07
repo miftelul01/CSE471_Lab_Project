@@ -1,45 +1,48 @@
-import { badRequest, fromPostgrestError, notImplemented, ok, withUser } from "@/lib/api";
+import { badRequest, notImplemented, ok, withUser } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { prisma } from "@/lib/prisma";
 
 /** M2.1 Shared Wallet & Bill-Splitting Engine — Miftelul Mehebub. */
 
-// Uses cookies() for the session, so it can never be statically prerendered.
 export const dynamic = "force-dynamic";
 
 export const GET = withUser(async (user) => {
   const houseId = await getActiveHouseId(user.id);
   if (!houseId) return badRequest("Join a house before using the shared wallet.");
 
-  const supabase = createClient();
+  const expenses = await prisma.expense.findMany({
+    where: { houseId },
+    include: {
+      shares: { include: { user: { select: { id: true, name: true } } } },
+      createdBy: { select: { id: true, name: true } },
+    },
+    orderBy: { spentOn: "desc" },
+  });
 
-  const [{ data: expenses, error }, { data: balances }] = await Promise.all([
-    supabase
-      .from("expenses")
-      .select("*, expense_shares(*, profiles(full_name))")
-      .eq("house_id", houseId)
-      .order("spent_on", { ascending: false }),
-    supabase.from("house_balances").select("*").eq("house_id", houseId),
-  ]);
+  // The house_balances SQL view is gone with Supabase; the same figures come
+  // from a grouped aggregate, which Prisma can express directly.
+  const grouped = await prisma.expenseShare.groupBy({
+    by: ["userId", "status"],
+    where: { expense: { houseId } },
+    _sum: { amount: true },
+  });
 
-  if (error) return fromPostgrestError(error);
-  return ok({ expenses, balances });
+  return ok({ expenses, balances: grouped });
 });
 
 /**
- * TODO (M2.1) — this is the heart of the feature, so do it in two steps:
- *
- *  1. Insert the expense (house_id from getActiveHouseId, created_by: user.id).
- *  2. Insert one expense_shares row per ACTIVE house member.
- *       EQUAL  -> amount / memberCount, in paisa, distributing the remainder
- *                 across the first N members so the shares sum EXACTLY to the
- *                 total. Naive rounding loses money and the ledger never balances.
- *       CUSTOM -> take the amounts from the body and reject unless they sum to
- *                 the expense total.
- *  3. If step 2 fails, delete the expense you just created (see
- *     app/api/houses/route.ts for the same compensate-on-failure pattern).
+ * TODO (M2.1) — the heart of the feature:
+ *  1. assertHouseMember(user, houseId) from lib/authz.ts.
+ *  2. Inside prisma.$transaction: create the expense, then one ExpenseShare
+ *     per ACTIVE house member.
+ *       EQUAL  -> amount / memberCount in paisa, distributing the remainder so
+ *                 the shares sum EXACTLY to the total. Naive rounding loses
+ *                 money and the ledger never balances.
+ *       CUSTOM -> take amounts from the body; reject unless they sum to total.
+ *     A transaction means a failure half-way can't leave an expense with no
+ *     shares (this is what the manual rollback used to do).
  */
 export const POST = withUser(async () => notImplemented("Adding shared expenses"));
 
-/** TODO (M2.1): mark a share PAID/WAIVED. The DB trigger stamps settled_at. */
+/** TODO (M2.1): mark a share PAID/WAIVED. A DB trigger stamps settledAt. */
 export const PATCH = withUser(async () => notImplemented("Settling a share"));

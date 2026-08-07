@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { getMyHouses, requireUser } from "@/lib/auth";
-import { FEATURES, MODULE_NAMES, type Feature } from "@/lib/features";
+import { MODULE_NAMES, visibleFeatures, type Feature } from "@/lib/features";
 
 /**
  * Dashboard + team board. Shows which house you're in and the live build
@@ -12,17 +12,18 @@ export default async function HomePage() {
   const user = await requireUser();
   const houses = await getMyHouses(user.id);
 
-  const done = FEATURES.filter((f) => f.status === "done").length;
+  const features = visibleFeatures(user.profile.role);
+  const done = features.filter((f) => f.status === "done").length;
   const modules: Feature["module"][] = [0, 1, 2, 3];
 
   return (
     <div>
       <PageHeader
-        title={`Welcome, ${user.profile.full_name || user.email}`}
+        title={`Welcome, ${user.profile.name || user.email}`}
         subtitle={
           houses.length > 0 ? (
             <>
-              You&apos;re in <strong>{houses[0].houses?.name}</strong>
+              You&apos;re in <strong>{houses[0].house.name}</strong>
               {houses.length > 1 ? ` (+${houses.length - 1} more)` : ""}. Most features below are
               scoped to this house.
             </>
@@ -37,8 +38,8 @@ export default async function HomePage() {
           )
         }
         action={
-          <Badge tone={done === FEATURES.length ? "green" : "slate"}>
-            {done} / {FEATURES.length} features built
+          <Badge tone={done === features.length ? "green" : "slate"}>
+            {done} / {features.length} features built
           </Badge>
         }
       />
@@ -50,7 +51,7 @@ export default async function HomePage() {
               {MODULE_NAMES[module]}
             </h2>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {FEATURES.filter((f) => f.module === module).map((feature) => (
+              {features.filter((f) => f.module === module).map((feature) => (
                 <Link key={feature.id} href={feature.href} className="block">
                   <Card className="h-full transition hover:border-slate-400">
                     <div className="mb-1 flex items-start justify-between gap-2">

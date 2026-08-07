@@ -1,8 +1,8 @@
 import { JoinRequestList } from "./JoinRequestList";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
-import type { JoinRequest, Listing } from "@/lib/supabase/types";
+import { joinRequestVisibilityFilter } from "@/lib/authz";
+import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "Join requests — Smart Mess" };
 
@@ -10,21 +10,20 @@ export const metadata = { title: "Join requests — Smart Mess" };
  * M1.2 — join requests (Mahia Tanzin).
  *
  * One query returns both "requests I sent" and "requests for my listings" —
- * the RLS policy decides which rows you're entitled to, so the split below is
- * purely presentational.
+ * the visibility filter decides which rows you are entitled to, so the split
+ * below is purely presentational.
  */
 export default async function JoinRequestsPage() {
   const user = await requireUser();
-  const supabase = createClient();
 
-  const { data } = await supabase
-    .from("join_requests")
-    .select("*, listings(*)")
-    .order("created_at", { ascending: false });
+  const requests = await prisma.joinRequest.findMany({
+    where: joinRequestVisibilityFilter(user),
+    include: { listing: true },
+    orderBy: { createdAt: "desc" },
+  });
 
-  const requests = (data as (JoinRequest & { listings: Listing | null })[] | null) ?? [];
-  const sent = requests.filter((r) => r.user_id === user.id);
-  const received = requests.filter((r) => r.user_id !== user.id);
+  const sent = requests.filter((r) => r.userId === user.id);
+  const received = requests.filter((r) => r.userId !== user.id);
 
   return (
     <div className="space-y-8">

@@ -1,20 +1,14 @@
 import { PreferencesForm } from "./PreferencesForm";
 import { PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "My preferences — Smart Mess" };
 
 /** M1.2 — lifestyle preference profile (Mahia Tanzin). */
 export default async function PreferencesPage() {
   const user = await requireUser();
-  const supabase = createClient();
-
-  const { data: preference } = await supabase
-    .from("preferences")
-    .select("*")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const preference = await prisma.preference.findUnique({ where: { userId: user.id } });
 
   return (
     <div className="max-w-2xl">

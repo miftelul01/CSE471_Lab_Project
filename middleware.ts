@@ -1,54 +1,48 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Refreshes the Supabase auth cookie on every request.
+ * Redirects signed-out visitors to /login.
  *
- * Server Components cannot write cookies, so without this the access token
- * would silently expire and users would get logged out mid-session. It also
- * gates the app: anything outside PUBLIC_ROUTES bounces to /login.
+ * This deliberately only checks whether a session cookie is *present* — it
+ * does not verify it. Middleware runs on the Edge runtime, where Prisma can't
+ * run, so a real check here would mean maintaining a second cut-down auth
+ * config just for the edge.
+ *
+ * That's fine, because this is a convenience redirect, not the security
+ * boundary. Every page calls requireUser()/requireRole() and every route
+ * handler goes through withUser()/withAdmin(), all of which verify the session
+ * properly on the server. A forged cookie gets past this file and straight
+ * into a redirect from requireUser().
  */
 
-const PUBLIC_ROUTES = ["/login", "/auth"];
+const PUBLIC_ROUTES = ["/login"];
 
-export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
+// NextAuth v5 cookie names; the __Secure- prefix is used over HTTPS.
+const SESSION_COOKIES = ["authjs.session-token", "__Secure-authjs.session-token"];
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  // Do not remove: this call is what actually performs the token refresh.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isPublic = PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
 
-  if (!user && !isPublic) {
+  if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
+    return NextResponse.next();
+  }
+
+  // API routes are never redirected. A fetch() that gets a 307 to the HTML
+  // login page fails with "Unexpected token '<'" instead of a readable error;
+  // withUser()/withAdmin() already answer 401 with JSON, so let them.
+  if (pathname.startsWith("/api")) {
+    return NextResponse.next();
+  }
+
+  const hasSession = SESSION_COOKIES.some((name) => request.cookies.has(name));
+  if (!hasSession) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {

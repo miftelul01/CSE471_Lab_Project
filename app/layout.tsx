@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { NavBar } from "@/components/NavBar";
 import { getSessionUser } from "@/lib/auth";
+import { getPlatformSettings } from "@/lib/settings.server";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,12 +12,14 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const user = await getSessionUser();
+  // getPlatformSettings never throws — it falls back to defaults — so an
+  // unreachable settings table costs a custom name, not the whole app.
+  const [user, settings] = await Promise.all([getSessionUser(), getPlatformSettings()]);
 
   return (
     <html lang="en">
       <body>
-        <NavBar user={user} />
+        <NavBar user={user} platformName={settings.platform_name} />
         <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
       </body>
     </html>

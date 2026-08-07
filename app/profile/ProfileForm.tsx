@@ -4,21 +4,21 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, Field, SuccessNote, buttonClass, inputClass } from "@/components/ui";
-import type { Profile, UserRole } from "@/lib/supabase/types";
+import type { User, UserRole } from "@prisma/client";
 
 const ROLES: { value: UserRole; label: string; hint: string }[] = [
   { value: "RESIDENT", label: "Resident", hint: "Living in a mess" },
   { value: "LANDLORD", label: "Landlord / House admin", hint: "Owns or manages property" },
 ];
 
-export function ProfileForm({ profile }: { profile: Profile }) {
+export function ProfileForm({ profile }: { profile: User }) {
   const router = useRouter();
   const [form, setForm] = useState({
-    full_name: profile.full_name,
+    name: profile.name,
     phone: profile.phone ?? "",
     role: profile.role,
-    emergency_contact_name: profile.emergency_contact_name ?? "",
-    emergency_contact_phone: profile.emergency_contact_phone ?? "",
+    emergencyContactName: profile.emergencyContactName ?? "",
+    emergencyContactPhone: profile.emergencyContactPhone ?? "",
   });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -56,13 +56,13 @@ export function ProfileForm({ profile }: { profile: Profile }) {
         <Field label="Full name">
           <input
             className={inputClass}
-            value={form.full_name}
-            onChange={(e) => set("full_name")(e.target.value)}
+            value={form.name}
+            onChange={(e) => set("name")(e.target.value)}
             required
           />
         </Field>
 
-        <Field label="Email" hint="Managed by your login provider — change it in Supabase Auth.">
+        <Field label="Email" hint="Managed by your login provider.">
           <input className={inputClass} value={profile.email} disabled />
         </Field>
 
@@ -100,15 +100,15 @@ export function ProfileForm({ profile }: { profile: Profile }) {
           <Field label="Name">
             <input
               className={inputClass}
-              value={form.emergency_contact_name}
-              onChange={(e) => set("emergency_contact_name")(e.target.value)}
+              value={form.emergencyContactName}
+              onChange={(e) => set("emergencyContactName")(e.target.value)}
             />
           </Field>
           <Field label="Phone">
             <input
               className={inputClass}
-              value={form.emergency_contact_phone}
-              onChange={(e) => set("emergency_contact_phone")(e.target.value)}
+              value={form.emergencyContactPhone}
+              onChange={(e) => set("emergencyContactPhone")(e.target.value)}
             />
           </Field>
         </fieldset>

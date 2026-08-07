@@ -1,75 +1,57 @@
-import { badRequest, fromPostgrestError, missingFields, ok, readJson, withUser } from "@/lib/api";
-import { createClient } from "@/lib/supabase/server";
-import type { CleanlinessLevel, SleepSchedule } from "@/lib/supabase/types";
+import { badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
+import { prisma } from "@/lib/prisma";
+import type { CleanlinessLevel, SleepSchedule } from "@prisma/client";
 
 /**
  * M1.2 — lifestyle preference profile (Mahia Tanzin).
  *
- * Note there is no `userId` parameter anywhere: the row is keyed on the
- * session user, and the "own preferences" RLS policy in migration 0003 makes
- * it impossible to read or write anyone else's even if you tried.
+ * Keyed on the session user, so there is no userId parameter anywhere. The
+ * "own preferences" RLS policy used to guarantee that; now it's guaranteed by
+ * never reading an id from the request.
  */
 
-// Uses cookies() for the session, so it can never be statically prerendered.
 export const dynamic = "force-dynamic";
 
 export const GET = withUser(async (user) => {
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("preferences")
-    .select("*")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (error) return fromPostgrestError(error);
-  return ok({ preference: data });
+  const preference = await prisma.preference.findUnique({ where: { userId: user.id } });
+  return ok({ preference });
 });
 
 type PreferenceBody = {
-  budget_min: number;
-  budget_max: number;
-  sleep_schedule: SleepSchedule;
+  budgetMin: number;
+  budgetMax: number;
+  sleepSchedule: SleepSchedule;
   cleanliness: CleanlinessLevel;
-  smoking_ok?: boolean;
-  pets_ok?: boolean;
-  preferred_area?: string | null;
+  smokingOk?: boolean;
+  petsOk?: boolean;
+  preferredArea?: string | null;
 };
 
 export const POST = withUser(async (user, req: Request) => {
   const body = await readJson<PreferenceBody>(req);
   if (!body) return badRequest("Invalid JSON body");
 
-  const missing = missingFields(body, [
-    "budget_min",
-    "budget_max",
-    "sleep_schedule",
-    "cleanliness",
-  ]);
+  const missing = missingFields(body, ["budgetMin", "budgetMax", "sleepSchedule", "cleanliness"]);
   if (missing.length > 0) return badRequest(`Missing required fields: ${missing.join(", ")}`);
-
-  if (Number(body.budget_min) > Number(body.budget_max)) {
-    return badRequest("budget_min cannot exceed budget_max");
+  if (Number(body.budgetMin) > Number(body.budgetMax)) {
+    return badRequest("budgetMin cannot exceed budgetMax");
   }
 
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("preferences")
-    .upsert(
-      {
-        user_id: user.id,
-        budget_min: Number(body.budget_min),
-        budget_max: Number(body.budget_max),
-        sleep_schedule: body.sleep_schedule,
-        cleanliness: body.cleanliness,
-        smoking_ok: Boolean(body.smoking_ok),
-        pets_ok: Boolean(body.pets_ok),
-        preferred_area: body.preferred_area || null,
-      },
-      { onConflict: "user_id" }
-    )
-    .select("*")
-    .single();
+  const data = {
+    budgetMin: Number(body.budgetMin),
+    budgetMax: Number(body.budgetMax),
+    sleepSchedule: body.sleepSchedule,
+    cleanliness: body.cleanliness,
+    smokingOk: Boolean(body.smokingOk),
+    petsOk: Boolean(body.petsOk),
+    preferredArea: body.preferredArea || null,
+  };
 
-  if (error) return fromPostgrestError(error);
-  return ok(data);
+  const preference = await prisma.preference.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id, ...data },
+    update: data,
+  });
+
+  return ok(preference);
 });
