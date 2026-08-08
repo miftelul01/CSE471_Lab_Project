@@ -17,11 +17,17 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_ROUTES = ["/login"];
 
+// The landing page is public. Matched exactly, because startsWith("/")
+// would make every route public.
+const PUBLIC_EXACT = ["/"];
+
 // NextAuth v5 cookie names; the __Secure- prefix is used over HTTPS.
 const SESSION_COOKIES = ["authjs.session-token", "__Secure-authjs.session-token"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (PUBLIC_EXACT.includes(pathname)) return NextResponse.next();
 
   if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
     return NextResponse.next();

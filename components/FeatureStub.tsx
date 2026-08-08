@@ -1,74 +1,52 @@
 import type { ReactNode } from "react";
 
+import { Icon } from "./Icon";
 import { getFeature } from "@/lib/features";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import type { IconName } from "@/lib/navigation";
 
 /**
- * Placeholder body for a feature nobody has built yet.
+ * Placeholder for an area that isn't built yet.
  *
- * It renders the requirement text, the owner, and exactly which files to open.
- * When you start your feature: delete <FeatureStub /> from your page, build the
- * real UI, and flip your status to "done" in lib/features.ts.
+ * Deliberately shows NOTHING about how the coursework is divided — no module
+ * numbers, no requirement ids, no owner names. Those live in lib/features.ts
+ * for our own tracking; the product just says the area is coming.
+ *
+ * The `checklist` prop is never rendered — it stays in the page source as the
+ * build order for whoever picks the work up. Rendering it (even hidden) would
+ * put module numbers and owner names into the shipped HTML.
  */
 export function FeatureStub({
   featureId,
+  icon = "dashboard",
   checklist,
   children,
 }: {
+  /** Internal id, e.g. "M1.3" — used only to look up the description. */
   featureId: string;
-  /** The concrete steps for this feature, in the order they should be built. */
+  icon?: IconName;
   checklist: string[];
   children?: ReactNode;
 }) {
   const feature = getFeature(featureId);
 
   return (
-    <div>
-      <PageHeader
-        title={feature.title}
-        subtitle={feature.summary}
-        action={<Badge tone="amber">Not built yet</Badge>}
-      />
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{feature.title}</h1>
+        <p className="mt-1 max-w-2xl text-slate-600">{feature.summary}</p>
+      </div>
 
-      <Card className="mb-4">
-        <dl className="grid gap-3 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="font-medium text-slate-500">Requirement</dt>
-            <dd className="mt-0.5 text-slate-900">{feature.id}</dd>
-          </div>
-          <div>
-            <dt className="font-medium text-slate-500">Owner</dt>
-            <dd className="mt-0.5 text-slate-900">{feature.owner}</dd>
-          </div>
-          <div>
-            <dt className="font-medium text-slate-500">Tables</dt>
-            <dd className="mt-0.5 font-mono text-xs text-slate-900">
-              {feature.tables.join(", ")}
-            </dd>
-          </div>
-        </dl>
-      </Card>
+      <div className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-card">
+        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-700">
+          <Icon name={icon} className="h-5 w-5" />
+        </span>
+        <h2 className="mt-4 font-medium text-slate-900">Coming soon</h2>
+        <p className="mx-auto mt-1 max-w-md text-sm text-slate-600">
+          This area is being built. The data model behind it already exists, so nothing here will
+          need re-entering once it lands.
+        </p>
+      </div>
 
-      <Card className="mb-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-900">Build order</h2>
-        <ol className="list-decimal space-y-1.5 pl-5 text-sm text-slate-700">
-          {checklist.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
-      </Card>
-
-      {feature.api.length > 0 ? (
-        <Card className="mb-4">
-          <h2 className="mb-2 text-sm font-semibold text-slate-900">Files to edit</h2>
-          <ul className="space-y-1 font-mono text-xs text-slate-600">
-            <li>{feature.href === "/" ? "app/page.tsx" : `app${feature.href}/page.tsx`}</li>
-            {feature.api.map((path) => (
-              <li key={path}>{path}</li>
-            ))}
-          </ul>
-        </Card>
-      ) : null}
 
       {children}
     </div>
