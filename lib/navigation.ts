@@ -54,7 +54,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     heading: "House management",
     items: [
-      { label: "Properties", href: "/listings?mine=true", icon: "building", landlordOnly: true },
+      { label: "Properties", href: "/properties", icon: "building", landlordOnly: true },
       { label: "Members & requests", href: "/join-requests", icon: "users" },
       { label: "My houses", href: "/houses", icon: "building" },
       { label: "Guest log", href: "/guests", icon: "guest" },
