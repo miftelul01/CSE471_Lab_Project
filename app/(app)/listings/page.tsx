@@ -4,7 +4,7 @@ import { ListingFilters } from "./ListingFilters";
 import { Badge, Card, EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { listingVisibilityFilter } from "@/lib/authz";
-import { ROOM_TYPE_LABELS } from "@/lib/listings";
+import { ROOM_TYPES, ROOM_TYPE_LABELS } from "@/lib/listings";
 import { prisma } from "@/lib/prisma";
 import type { Prisma, RoomType } from "@prisma/client";
 
@@ -31,17 +31,19 @@ export default async function ListingsPage({ searchParams }: { searchParams: Sea
 
   const isLandlord = user.profile.role !== "RESIDENT";
 
-  const filters: Prisma.ListingWhereInput[] = [
-    { isActive: true },
-    listingVisibilityFilter(user),
-  ];
+  // listingVisibilityFilter already covers isActive AND moderation status.
+  const filters: Prisma.ListingWhereInput[] = [listingVisibilityFilter(user)];
 
   if (searchParams.area) {
     filters.push({ area: { contains: searchParams.area, mode: "insensitive" } });
   }
   if (searchParams.min_rent) filters.push({ rent: { gte: Number(searchParams.min_rent) } });
   if (searchParams.max_rent) filters.push({ rent: { lte: Number(searchParams.max_rent) } });
-  if (searchParams.room_type) filters.push({ roomType: searchParams.room_type as RoomType });
+  // Ignore an unrecognised room type rather than erroring — this comes from a
+  // shareable URL that someone may well have hand-edited.
+  if (searchParams.room_type && ROOM_TYPES.includes(searchParams.room_type as RoomType)) {
+    filters.push({ roomType: searchParams.room_type as RoomType });
+  }
   if (searchParams.q) {
     filters.push({
       OR: [

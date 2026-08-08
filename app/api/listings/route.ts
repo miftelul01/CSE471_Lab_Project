@@ -1,7 +1,7 @@
 import { badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
 import { assertCanCreateListing, isHouseAdmin, listingVisibilityFilter } from "@/lib/authz";
 import { createHouseWithOwner } from "@/lib/houses";
-import { validateListing, type ListingInput } from "@/lib/listings";
+import { ROOM_TYPES, validateListing, type ListingInput } from "@/lib/listings";
 import { prisma } from "@/lib/prisma";
 import type { Prisma, RoomType } from "@prisma/client";
 
@@ -22,8 +22,10 @@ export const GET = withUser(async (user, req: Request) => {
   if (params.get("mine") === "true") {
     filters.push({ landlordId: user.id });
   } else {
-    // Replaces the "active listings are browsable" RLS policy.
-    filters.push({ isActive: true }, listingVisibilityFilter(user));
+    // The visibility filter already covers both isActive and moderation —
+    // adding another isActive check here is what previously let removed
+    // listings leak back into search.
+    filters.push(listingVisibilityFilter(user));
   }
 
   const area = params.get("area");
@@ -35,7 +37,14 @@ export const GET = withUser(async (user, req: Request) => {
   if (area) filters.push({ area: { contains: area, mode: "insensitive" } });
   if (minRent) filters.push({ rent: { gte: Number(minRent) } });
   if (maxRent) filters.push({ rent: { lte: Number(maxRent) } });
-  if (roomType) filters.push({ roomType: roomType as RoomType });
+  if (roomType) {
+    // An unknown enum value reaches Postgres as an invalid cast and 500s, so
+    // check it here and answer with a useful 400 instead.
+    if (!ROOM_TYPES.includes(roomType as RoomType)) {
+      return badRequest(`room_type must be one of: ${ROOM_TYPES.join(", ")}`);
+    }
+    filters.push({ roomType: roomType as RoomType });
+  }
   if (search) {
     filters.push({
       OR: [

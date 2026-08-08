@@ -1,7 +1,6 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import {
@@ -22,7 +21,6 @@ import {
  * (which bcrypt-hashes the password) and then signs in with the same details.
  */
 export function LoginForm({ next }: { next: string }) {
-  const router = useRouter();
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [fullName, setFullName] = useState("");
@@ -48,6 +46,7 @@ export function LoginForm({ next }: { next: string }) {
         const body = await response.json();
         if (!response.ok) {
           setError(body.error ?? "Could not create your account");
+          setBusy(false);
           return;
         }
         setNotice("Account created — signing you in…");
@@ -63,14 +62,21 @@ export function LoginForm({ next }: { next: string }) {
             ? "Account created, but sign-in failed. Try signing in manually."
             : "Wrong email or password."
         );
+        setBusy(false);
         return;
       }
 
-      router.push(next);
-      router.refresh(); // re-render the server layout so the nav sees the session
+      // A full page load, not router.push(). signIn() has just set the session
+      // cookie, and a client-side navigation races it: the RSC request for the
+      // dashboard can leave before the cookie is committed, middleware sees no
+      // session and bounces back to /login, and the screen appears to hang
+      // until you refresh. A hard navigation always sends the new cookie.
+      //
+      // Deliberately not clearing `busy` here — the button stays disabled
+      // until the browser leaves the page.
+      window.location.assign(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in");
-    } finally {
       setBusy(false);
     }
   }

@@ -24,6 +24,8 @@ export default async function PropertiesPage() {
   // Residents have no portfolio; send them to the browse page instead.
   if (user.profile.role === "RESIDENT") redirect("/listings");
 
+  // Only rooms you posted. A flat head runs the household, not the owner's
+  // property, so someone else's rentals never appear in your portfolio.
   const listings = await prisma.listing.findMany({
     where: { landlordId: user.id },
     include: {

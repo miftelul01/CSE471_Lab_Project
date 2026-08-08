@@ -1,6 +1,7 @@
 import { Sidebar } from "@/components/Sidebar";
 import { TopBar } from "@/components/TopBar";
 import { getMyHouses, requireUser } from "@/lib/auth";
+import { personaFor } from "@/lib/navigation";
 import { getPlatformSettings } from "@/lib/settings.server";
 
 /**
@@ -16,12 +17,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await requireUser();
   const [houses, settings] = await Promise.all([getMyHouses(user.id), getPlatformSettings()]);
 
+  // Exactly one member per flat is the flat head; that plus the role decides
+  // which of the three products this person sees.
+  const isFlatHead = houses.some((h) => h.isHouseAdmin && h.role === "RESIDENT");
+  const persona = personaFor(user.profile.role, isFlatHead);
+
   return (
     <div className="flex min-h-screen bg-canvas">
-      <Sidebar role={user.profile.role} platformName={settings.platform_name} />
+      <Sidebar persona={persona} platformName={settings.platform_name} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar user={user} houseName={houses[0]?.house.name ?? null} />
+        <TopBar user={user} persona={persona} houseName={houses[0]?.house.name ?? null} />
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 lg:px-8">
           {children}
         </main>

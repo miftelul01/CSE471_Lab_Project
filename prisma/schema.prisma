@@ -164,6 +164,18 @@ enum DisputeVoteValue {
   ABSTAIN
 }
 
+/// Moderation state, applied by a system administrator.
+enum PostStatus {
+  PUBLISHED
+  REMOVED
+}
+
+/// Whether an account may sign in at all.
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth (NextAuth / Auth.js — field names here are fixed by the Prisma adapter)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,7 +192,9 @@ model User {
   // why the credentials provider must reject a null hash rather than compare.
   passwordHash String? @map("password_hash")
 
-  role                  UserRole @default(RESIDENT)
+  role                  UserRole      @default(RESIDENT)
+  status                AccountStatus @default(ACTIVE)
+  suspendedReason       String?       @map("suspended_reason")
   phone                 String?
   emergencyContactName  String?  @map("emergency_contact_name")
   emergencyContactPhone String?  @map("emergency_contact_phone")
@@ -215,6 +229,10 @@ model User {
   disputeEvents      DisputeEvent[]
   googleCredential   GoogleCredential?
   settingsUpdated    PlatformSetting[]
+  roommatePosts      RoommatePost[]        @relation("RoommatePoster")
+  roommateApplications RoommateApplication[]
+  listingsRemoved    Listing[]             @relation("ListingModerator")
+  roommatePostsRemoved RoommatePost[]      @relation("RoommatePostModerator")
 
   @@index([createdAt(sort: Desc)])
   @@map("users")
@@ -280,6 +298,7 @@ model House {
 
   members        HouseMember[]
   listings       Listing[]
+  roommatePosts  RoommatePost[]
   guestLogs      GuestLog[]
   expenses       Expense[]
   menuProposals  MenuProposal[]
@@ -332,6 +351,12 @@ model Listing {
   latitude      Float?
   longitude     Float?
   isActive      Boolean           @default(true) @map("is_active")
+  /// Moderation is separate from isActive: a landlord delists their own room,
+  /// a system administrator removes one that breaks the rules.
+  status        PostStatus        @default(PUBLISHED)
+  removedReason String?           @map("removed_reason")
+  removedAt     DateTime?         @map("removed_at")
+  removedById   String?           @map("removed_by")
   sleepSchedule SleepSchedule?    @map("sleep_schedule")
   cleanliness   CleanlinessLevel?
   allowsSmoking Boolean?          @map("allows_smoking")
@@ -339,8 +364,9 @@ model Listing {
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
-  landlord User   @relation(fields: [landlordId], references: [id], onDelete: Cascade)
-  house    House? @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  landlord  User   @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+  house     House? @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  removedBy User?  @relation("ListingModerator", fields: [removedById], references: [id], onDelete: SetNull)
 
   matches      Match[]
   favorites    Favorite[]
@@ -806,6 +832,61 @@ model CalendarEvent {
   @@unique([sourceType, sourceId])
   @@index([houseId, startsAt])
   @@map("calendar_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Roommate posts — a flat admin advertising a spare seat in a house they live
+// in. Deliberately separate from Listing: a landlord rents out a property to a
+// tenant, whereas this invites someone into an existing household. Different
+// author, different audience, different meaning when accepted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RoommatePost {
+  id             String            @id @default(uuid())
+  houseId        String            @map("house_id")
+  postedById     String            @map("posted_by")
+  title          String
+  description    String            @default("")
+  monthlyShare   Decimal           @map("monthly_share") @db.Decimal(10, 2)
+  seatsAvailable Int               @default(1) @map("seats_available")
+  availableFrom  DateTime?         @map("available_from") @db.Date
+  sleepSchedule  SleepSchedule?    @map("sleep_schedule")
+  cleanliness    CleanlinessLevel?
+  smokingOk      Boolean?          @map("smoking_ok")
+  petsOk         Boolean?          @map("pets_ok")
+  isActive       Boolean           @default(true) @map("is_active")
+  status         PostStatus        @default(PUBLISHED)
+  removedReason  String?           @map("removed_reason")
+  removedAt      DateTime?         @map("removed_at")
+  removedById    String?           @map("removed_by")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  house     House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  postedBy  User  @relation("RoommatePoster", fields: [postedById], references: [id], onDelete: Cascade)
+  removedBy User? @relation("RoommatePostModerator", fields: [removedById], references: [id], onDelete: SetNull)
+
+  applications RoommateApplication[]
+
+  @@index([houseId])
+  @@index([isActive, monthlyShare])
+  @@map("roommate_posts")
+}
+
+model RoommateApplication {
+  id        String            @id @default(uuid())
+  postId    String            @map("post_id")
+  userId    String            @map("user_id")
+  status    JoinRequestStatus @default(PENDING)
+  message   String?
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  post RoommatePost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("roommate_applications")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

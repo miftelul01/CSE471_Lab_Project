@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Icon } from "./Icon";
 import { SignOutButton } from "./SignOutButton";
 import type { SessionUser } from "@/lib/auth";
+import { PERSONA_LABEL, type Persona } from "@/lib/navigation";
 
 /** Initials for the avatar chip, e.g. "Nusrat Jahan" -> "NJ". */
 function initials(name: string, email: string) {
@@ -13,14 +14,24 @@ function initials(name: string, email: string) {
 
 export function TopBar({
   user,
+  persona,
   houseName,
 }: {
   user: SessionUser;
+  persona: Persona;
   houseName: string | null;
 }) {
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
-      {houseName ? (
+      {persona === "LANDLORD" ? (
+        <Link
+          href="/properties"
+          className="hidden items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 sm:flex"
+        >
+          <Icon name="building" className="h-4 w-4 text-slate-400" />
+          My portfolio
+        </Link>
+      ) : houseName ? (
         <span className="hidden items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 sm:flex">
           <Icon name="building" className="h-4 w-4 text-slate-400" />
           {houseName}
@@ -54,9 +65,7 @@ export function TopBar({
           <span className="block text-sm font-medium text-slate-800">
             {user.profile.name || user.email}
           </span>
-          <span className="block text-xs capitalize text-slate-500">
-            {user.profile.role.toLowerCase()}
-          </span>
+          <span className="block text-xs text-slate-500">{PERSONA_LABEL[persona]}</span>
         </span>
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-800">
           {initials(user.profile.name, user.email)}

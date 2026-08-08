@@ -1,4 +1,5 @@
 import { badRequest, ok, readJson, withUser } from "@/lib/api";
+import { admitToHouse } from "@/lib/houses";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -20,11 +21,11 @@ export const POST = withUser(async (user, req: Request) => {
   });
   if (!house) return badRequest("No house exists with that id.");
 
-  const membership = await prisma.houseMember.upsert({
-    where: { houseId_userId: { houseId: house.id, userId: user.id } },
-    create: { houseId: house.id, userId: user.id, role: user.profile.role, status: "ACTIVE" },
-    update: { status: "ACTIVE" },
-  });
+  // admitToHouse applies the flat-admin rule: the first resident in a house
+  // becomes the one who runs it.
+  const membership = await prisma.$transaction((tx) =>
+    admitToHouse(tx, house.id, user.id, user.profile.role)
+  );
 
   return ok(membership, 201);
 });

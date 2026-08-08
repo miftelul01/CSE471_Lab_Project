@@ -15,11 +15,11 @@ export default async function EditListingPage({ params }: { params: { id: string
   const listing = await prisma.listing.findUnique({ where: { id: params.id } });
   if (!listing) notFound();
 
-  // The API re-checks this with assertCanEditListing; checking here too means a
-  // non-owner is redirected rather than filling in a form that will 403.
-  if (listing.landlordId !== user.id && user.profile.role !== "ADMIN") {
-    redirect(`/listings/${params.id}`);
-  }
+  // Mirrors assertCanEditListing, which the API enforces: the owner or a
+  // system administrator, nobody else. Checking here too means anyone else is
+  // redirected rather than filling in a form that would 403 on save.
+  const mayEdit = listing.landlordId === user.id || user.profile.role === "ADMIN";
+  if (!mayEdit) redirect(`/listings/${params.id}`);
 
   const houses = await getAdministeredHouses(user.id);
 

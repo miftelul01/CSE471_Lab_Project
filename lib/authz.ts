@@ -91,25 +91,45 @@ export async function assertHouseMember(user: SessionUser, houseId: string) {
 /* ── Listings (M1.1) ────────────────────────────────────────────────────── */
 
 /**
- * Policy "active listings are browsable": everyone sees active listings; a
- * landlord additionally sees their own delisted ones.
+ * The complete visibility rule for rooms — callers must not add their own
+ * isActive check on top, or they will re-open the hole this closes.
+ *
+ * Two independent reasons a room can be hidden, and both must be respected:
+ *   isActive false  the landlord delisted it themselves
+ *   status REMOVED  an administrator took it down for breaking the rules
+ *
+ * A landlord still sees their own rooms in either state, so they can re-list
+ * or read the moderation reason — but a removed room stays out of everyone
+ * else's search regardless of what the owner does to isActive.
  */
 export function listingVisibilityFilter(user: SessionUser): Prisma.ListingWhereInput {
   if (isPlatformAdmin(user)) return {};
-  return { OR: [{ isActive: true }, { landlordId: user.id }] };
+  return {
+    OR: [{ isActive: true, status: "PUBLISHED" }, { landlordId: user.id }],
+  };
 }
 
-/** Policies "landlords update/delete own listings". */
+/**
+ * Who may edit or delist a rental listing: the landlord who posted it, or a
+ * system administrator. Nobody else.
+ *
+ * The brief says "landlords or house admins", and a flat head IS a house
+ * admin — but a flat head is a RESIDENT who runs the household, and letting a
+ * tenant rewrite their own landlord's asking rent is clearly not the intent.
+ * A flat head governs the household (roommate posts, expenses, chores,
+ * disputes); the owner governs the property.
+ */
 export async function assertCanEditListing(user: SessionUser, listingId: string) {
   const listing = await prisma.listing.findUnique({
     where: { id: listingId },
     select: { landlordId: true },
   });
   if (!listing) throw new AuthzError("No such listing", 404);
+
   if (isPlatformAdmin(user)) return;
-  if (listing.landlordId !== user.id) {
-    throw new AuthzError("That listing belongs to another landlord.");
-  }
+  if (listing.landlordId === user.id) return;
+
+  throw new AuthzError("Only the landlord who posted this room can change it.");
 }
 
 /** Policy "landlords create own listings" (plus the role gate the UI shows). */

@@ -1,23 +1,23 @@
 import type { UserRole } from "@prisma/client";
 
 /**
- * Sidebar navigation.
+ * Navigation, keyed on what someone actually does here.
  *
- * Grouped by what a resident is trying to DO, not by how the coursework is
- * split. Module numbers and feature owners live in lib/features.ts for our own
- * tracking and are deliberately never rendered anywhere in the product.
+ * Three personas, three different products:
+ *
+ *   LANDLORD   owns flats but lives in none. Property business only — rooms,
+ *              applicants, tenants' maintenance, guest oversight. Deliberately
+ *              NO wallet / meals / chores / menu: he is not in the household.
+ *   FLAT_HEAD  a resident who runs one household. Everything a member has,
+ *              plus the levers to run the place: members, roommate ads, money.
+ *   MEMBER     lives in a flat. Their own share, their own meals and chores.
+ *
+ * System administrators get their own console entirely — see AdminSidebar.
  */
 
-export type NavItem = {
-  label: string;
-  href: string;
-  icon: IconName;
-  /** Hide unless the signed-in user holds this role. */
-  requiresRole?: UserRole;
-  /** Hide from residents (landlords and admins only). */
-  landlordOnly?: boolean;
-};
+export type Persona = "LANDLORD" | "FLAT_HEAD" | "MEMBER";
 
+export type NavItem = { label: string; href: string; icon: IconName };
 export type NavGroup = { heading: string; items: NavItem[] };
 
 export type IconName =
@@ -38,30 +38,38 @@ export type IconName =
   | "calendar"
   | "shield";
 
-export const NAV_GROUPS: NavGroup[] = [
+const LANDLORD_NAV: NavGroup[] = [
+  { heading: "Overview", items: [{ label: "Dashboard", href: "/dashboard", icon: "dashboard" }] },
   {
-    heading: "Overview",
-    items: [{ label: "Dashboard", href: "/dashboard", icon: "dashboard" }],
-  },
-  {
-    heading: "Discover",
+    heading: "Portfolio",
     items: [
-      { label: "Find a room", href: "/listings", icon: "search" },
-      { label: "Roommate matching", href: "/matches", icon: "match" },
-      { label: "Map view", href: "/map", icon: "map" },
+      { label: "Properties", href: "/properties", icon: "building" },
+      { label: "Applications", href: "/join-requests", icon: "users" },
+      { label: "My houses", href: "/houses", icon: "guest" },
     ],
   },
   {
-    heading: "House management",
+    heading: "Oversight",
     items: [
-      { label: "Properties", href: "/properties", icon: "building", landlordOnly: true },
-      { label: "Members & requests", href: "/join-requests", icon: "users" },
-      { label: "My houses", href: "/houses", icon: "building" },
+      { label: "Maintenance", href: "/maintenance", icon: "wrench" },
+      { label: "Guest log", href: "/guests", icon: "guest" },
+      { label: "Escalated cases", href: "/mess-court", icon: "gavel" },
+    ],
+  },
+];
+
+const FLAT_HEAD_NAV: NavGroup[] = [
+  { heading: "Overview", items: [{ label: "Dashboard", href: "/dashboard", icon: "dashboard" }] },
+  {
+    heading: "My flat",
+    items: [
+      { label: "Members", href: "/houses", icon: "users" },
+      { label: "Roommate ads", href: "/roommates", icon: "match" },
       { label: "Guest log", href: "/guests", icon: "guest" },
     ],
   },
   {
-    heading: "Finance",
+    heading: "Money",
     items: [
       { label: "Shared wallet", href: "/wallet", icon: "wallet" },
       { label: "Payments", href: "/payments", icon: "card" },
@@ -82,23 +90,69 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "House calendar", href: "/calendar", icon: "calendar" },
     ],
   },
-  {
-    heading: "Governance",
-    items: [
-      { label: "Mess Court", href: "/mess-court", icon: "gavel" },
-      { label: "Administration", href: "/admin", icon: "shield", requiresRole: "ADMIN" },
-    ],
-  },
+  { heading: "Governance", items: [{ label: "Mess Court", href: "/mess-court", icon: "gavel" }] },
 ];
 
-/** Filters the nav for a role. Presentation only — pages enforce access. */
-export function navFor(role: UserRole | null): NavGroup[] {
-  return NAV_GROUPS.map((group) => ({
-    heading: group.heading,
-    items: group.items.filter((item) => {
-      if (item.requiresRole && item.requiresRole !== role) return false;
-      if (item.landlordOnly && role === "RESIDENT") return false;
-      return true;
-    }),
-  })).filter((group) => group.items.length > 0);
+const MEMBER_NAV: NavGroup[] = [
+  { heading: "Overview", items: [{ label: "Dashboard", href: "/dashboard", icon: "dashboard" }] },
+  {
+    heading: "Find a place",
+    items: [
+      { label: "Find a room", href: "/listings", icon: "search" },
+      { label: "Rooms in flats", href: "/roommates", icon: "guest" },
+      { label: "Roommate matching", href: "/matches", icon: "match" },
+      { label: "Map view", href: "/map", icon: "map" },
+    ],
+  },
+  {
+    heading: "My flat",
+    items: [
+      { label: "Housemates", href: "/houses", icon: "users" },
+      { label: "Guest log", href: "/guests", icon: "guest" },
+    ],
+  },
+  {
+    heading: "My money",
+    items: [
+      { label: "My share", href: "/wallet", icon: "wallet" },
+      { label: "Payments", href: "/payments", icon: "card" },
+    ],
+  },
+  {
+    heading: "Meals",
+    items: [
+      { label: "Menu voting", href: "/menu", icon: "vote" },
+      { label: "Meal attendance", href: "/meals", icon: "meal" },
+    ],
+  },
+  {
+    heading: "Operations",
+    items: [
+      { label: "Maintenance", href: "/maintenance", icon: "wrench" },
+      { label: "My chores", href: "/chores", icon: "rotate" },
+    ],
+  },
+  { heading: "Governance", items: [{ label: "Mess Court", href: "/mess-court", icon: "gavel" }] },
+];
+
+/**
+ * Landlord is decided by role. The split between flat head and member is
+ * decided by whether they run the household they live in — exactly one member
+ * per flat does.
+ */
+export function personaFor(role: UserRole, isFlatHead: boolean): Persona {
+  if (role === "LANDLORD") return "LANDLORD";
+  return isFlatHead ? "FLAT_HEAD" : "MEMBER";
 }
+
+export function navFor(persona: Persona): NavGroup[] {
+  if (persona === "LANDLORD") return LANDLORD_NAV;
+  if (persona === "FLAT_HEAD") return FLAT_HEAD_NAV;
+  return MEMBER_NAV;
+}
+
+export const PERSONA_LABEL: Record<Persona, string> = {
+  LANDLORD: "Landlord",
+  FLAT_HEAD: "Flat head",
+  MEMBER: "Resident",
+};

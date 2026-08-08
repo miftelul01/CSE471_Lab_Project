@@ -62,6 +62,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // rather than an error keeps us from revealing which emails exist.
         if (!user?.passwordHash) return null;
 
+        // A system administrator can suspend an account; that has to block
+        // sign-in, not just hide the UI.
+        if (user.status === "SUSPENDED") return null;
+
         const valid = await bcrypt.compare(password, user.passwordHash);
         if (!valid) return null;
 

@@ -1,5 +1,6 @@
 import { badRequest, ok, readJson, withUser } from "@/lib/api";
 import { assertCanSetJoinRequestStatus, joinRequestVisibilityFilter } from "@/lib/authz";
+import { admitToHouse } from "@/lib/houses";
 import { prisma } from "@/lib/prisma";
 import type { JoinRequestStatus } from "@prisma/client";
 
@@ -57,18 +58,7 @@ export const PATCH = withUser(async (user, req: Request) => {
       if (!existing.listing.houseId) {
         throw new Error("That listing isn't attached to a house yet.");
       }
-      await tx.houseMember.upsert({
-        where: {
-          houseId_userId: { houseId: existing.listing.houseId, userId: existing.userId },
-        },
-        create: {
-          houseId: existing.listing.houseId,
-          userId: existing.userId,
-          role: "RESIDENT",
-          status: "ACTIVE",
-        },
-        update: { status: "ACTIVE" },
-      });
+      await admitToHouse(tx, existing.listing.houseId, existing.userId, "RESIDENT");
     }
 
     return tx.joinRequest.update({ where: { id: body.id }, data: { status: body.status } });

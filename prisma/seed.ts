@@ -119,11 +119,14 @@ async function main() {
     houseIds[h.key] = house.id;
   }
 
+  // The first resident into a house becomes its flat admin — the person who
+  // runs the household and may advertise a spare seat. Later joiners are
+  // ordinary residents.
   await prisma.houseMember.createMany({
     data: [
-      { houseId: houseIds.bashundhara, userId: ids.nusrat, role: "RESIDENT", status: "ACTIVE" },
+      { houseId: houseIds.bashundhara, userId: ids.nusrat, role: "RESIDENT", status: "ACTIVE", isHouseAdmin: true },
       { houseId: houseIds.bashundhara, userId: ids.tanvir, role: "RESIDENT", status: "ACTIVE" },
-      { houseId: houseIds.banani, userId: ids.sadia, role: "RESIDENT", status: "ACTIVE" },
+      { houseId: houseIds.banani, userId: ids.sadia, role: "RESIDENT", status: "ACTIVE", isHouseAdmin: true },
     ],
   });
   console.log(`  ${HOUSES.length} houses, 3 residents placed`);
@@ -174,6 +177,47 @@ async function main() {
     ],
   });
   console.log("  4 preference profiles, 5 favourites, 3 join requests");
+
+  console.log("Creating roommate posts…");
+  const nusratPost = await prisma.roommatePost.create({
+    data: {
+      houseId: houseIds.bashundhara,
+      postedById: ids.nusrat,
+      title: "Spare seat in a quiet 3-person flat",
+      description:
+        "Two of us are final-year students. Kitchen and living room shared, quiet after 11pm, cleaner comes twice a week.",
+      monthlyShare: 6200,
+      seatsAvailable: 1,
+      availableFrom: new Date(Date.now() + 14 * 86_400_000),
+      sleepSchedule: "EARLY_BIRD",
+      cleanliness: "VERY_TIDY",
+      smokingOk: false,
+      petsOk: false,
+    },
+  });
+  await prisma.roommatePost.create({
+    data: {
+      houseId: houseIds.banani,
+      postedById: ids.sadia,
+      title: "Room going in Banani flat share",
+      description: "Furnished room in a lift building. Two working professionals already here.",
+      monthlyShare: 15000,
+      seatsAvailable: 1,
+      sleepSchedule: "FLEXIBLE",
+      cleanliness: "VERY_TIDY",
+      smokingOk: false,
+      petsOk: true,
+    },
+  });
+  await prisma.roommateApplication.create({
+    data: {
+      postId: nusratPost.id,
+      userId: ids.arif,
+      status: "PENDING",
+      message: "I'm quiet, tidy and around campus most days. Could I come and see it?",
+    },
+  });
+  console.log("  2 spare seats advertised, 1 applicant waiting");
 
   console.log("Creating maintenance tickets…");
   const tickets = await Promise.all([
