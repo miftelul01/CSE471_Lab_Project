@@ -22,8 +22,19 @@ export default async function JoinRequestsPage() {
     orderBy: { createdAt: "desc" },
   });
 
-  const sent = requests.filter((r) => r.userId === user.id);
-  const received = requests.filter((r) => r.userId !== user.id);
+  const toRow = (r: (typeof requests)[number]) => ({
+    id: r.id,
+    status: r.status,
+    message: r.message,
+    listing: r.listing && {
+      title: r.listing.title,
+      area: r.listing.area,
+      rent: Number(r.listing.rent),
+    },
+  });
+
+  const sent = requests.filter((r) => r.userId === user.id).map(toRow);
+  const received = requests.filter((r) => r.userId !== user.id).map(toRow);
 
   return (
     <div className="space-y-8">

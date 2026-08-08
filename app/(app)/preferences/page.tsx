@@ -16,7 +16,19 @@ export default async function PreferencesPage() {
         title="My lifestyle preferences"
         subtitle="These feed the matching engine. The closer they are to reality, the better your suggested houses will be."
       />
-      <PreferencesForm preference={preference} />
+      <PreferencesForm
+        preference={
+          preference && {
+            budgetMin: Number(preference.budgetMin),
+            budgetMax: Number(preference.budgetMax),
+            sleepSchedule: preference.sleepSchedule,
+            cleanliness: preference.cleanliness,
+            smokingOk: preference.smokingOk,
+            petsOk: preference.petsOk,
+            preferredArea: preference.preferredArea,
+          }
+        }
+      />
     </div>
   );
 }

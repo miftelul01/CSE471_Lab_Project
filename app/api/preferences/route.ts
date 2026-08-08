@@ -1,4 +1,5 @@
 import { badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
+import { CLEANLINESS_LEVELS, SLEEP_SCHEDULES } from "@/lib/listings";
 import { prisma } from "@/lib/prisma";
 import type { CleanlinessLevel, SleepSchedule } from "@prisma/client";
 
@@ -33,13 +34,31 @@ export const POST = withUser(async (user, req: Request) => {
 
   const missing = missingFields(body, ["budgetMin", "budgetMax", "sleepSchedule", "cleanliness"]);
   if (missing.length > 0) return badRequest(`Missing required fields: ${missing.join(", ")}`);
-  if (Number(body.budgetMin) > Number(body.budgetMax)) {
+
+  const budgetMin = Number(body.budgetMin);
+  const budgetMax = Number(body.budgetMax);
+  if (!Number.isFinite(budgetMin) || budgetMin < 0) {
+    return badRequest("budgetMin must be a number of 0 or more.");
+  }
+  if (!Number.isFinite(budgetMax) || budgetMax < 0) {
+    return badRequest("budgetMax must be a number of 0 or more.");
+  }
+  if (budgetMin > budgetMax) {
     return badRequest("budgetMin cannot exceed budgetMax");
+  }
+  // An unknown enum value reaches Postgres as an invalid cast and 500s, so
+  // check it here and answer with a useful 400 instead (mirrors the same
+  // guard on room type in app/api/listings/route.ts).
+  if (!SLEEP_SCHEDULES.includes(body.sleepSchedule)) {
+    return badRequest(`sleepSchedule must be one of: ${SLEEP_SCHEDULES.join(", ")}`);
+  }
+  if (!CLEANLINESS_LEVELS.includes(body.cleanliness)) {
+    return badRequest(`cleanliness must be one of: ${CLEANLINESS_LEVELS.join(", ")}`);
   }
 
   const data = {
-    budgetMin: Number(body.budgetMin),
-    budgetMax: Number(body.budgetMax),
+    budgetMin,
+    budgetMax,
     sleepSchedule: body.sleepSchedule,
     cleanliness: body.cleanliness,
     smokingOk: Boolean(body.smokingOk),

@@ -66,23 +66,32 @@ export async function getAdministeredHouses(userId: string): Promise<House[]> {
  * the flat has to be in charge.
  *
  * Later joiners are ordinary residents; the flat admin can hand the role over.
+ *
+ * `status` defaults to ACTIVE because the caller that matters most — a
+ * join-request the landlord just accepted — has already been vetted by a
+ * human. A direct-by-id join (app/api/houses/join) has not, so it passes
+ * PENDING explicitly: every house-scoped query filters on status ACTIVE, so a
+ * pending row grants no access to anything until someone flips it.
  */
 export async function admitToHouse(
   tx: Prisma.TransactionClient,
   houseId: string,
   userId: string,
-  role: UserRole = "RESIDENT"
+  role: UserRole = "RESIDENT",
+  status: "ACTIVE" | "PENDING" = "ACTIVE"
 ) {
   const existingFlatAdmin = await tx.houseMember.findFirst({
     where: { houseId, status: "ACTIVE", isHouseAdmin: true, role: "RESIDENT" },
     select: { id: true },
   });
 
-  const isFirstResident = role === "RESIDENT" && existingFlatAdmin === null;
+  // Only an ACTIVE admission can claim the flat-admin seat — a still-pending
+  // member hasn't actually joined the household yet.
+  const isFirstResident = status === "ACTIVE" && role === "RESIDENT" && existingFlatAdmin === null;
 
   return tx.houseMember.upsert({
     where: { houseId_userId: { houseId, userId } },
-    create: { houseId, userId, role, status: "ACTIVE", isHouseAdmin: isFirstResident },
-    update: { status: "ACTIVE" },
+    create: { houseId, userId, role, status, isHouseAdmin: isFirstResident },
+    update: { status },
   });
 }

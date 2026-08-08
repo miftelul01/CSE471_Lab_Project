@@ -15,8 +15,8 @@ import type { House, HouseMember, User, UserRole } from "@prisma/client";
 export type SessionUser = {
   id: string;
   email: string;
-  /** Full row, for pages that need phone, emergency contacts, etc. */
-  profile: User;
+  /** Full row minus the bcrypt hash, for pages that need phone, emergency contacts, etc. */
+  profile: Omit<User, "passwordHash">;
 };
 
 /** Current user, or null when signed out. */
@@ -26,8 +26,13 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
   // The JWT carries id and role, but pages want the whole row, and reading it
   // fresh means a profile edit shows up immediately rather than at token
-  // refresh.
-  const profile = await prisma.user.findUnique({ where: { id: session.user.id } });
+  // refresh. omit rather than select, so this doesn't go stale as new columns
+  // are added — passwordHash is the one field that must never reach a client
+  // component or an API response.
+  const profile = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    omit: { passwordHash: true },
+  });
   if (!profile) return null;
 
   return { id: profile.id, email: profile.email, profile };

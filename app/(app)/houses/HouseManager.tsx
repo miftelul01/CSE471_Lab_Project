@@ -11,6 +11,7 @@ export function HouseManager({ canCreate }: { canCreate: boolean }) {
   const [busy, setBusy] = useState(false);
   const [create, setCreate] = useState({ name: "", address: "", area: "" });
   const [joinId, setJoinId] = useState("");
+  const [requested, setRequested] = useState(false);
 
   async function post(url: string, payload: unknown) {
     setBusy(true);
@@ -82,15 +83,21 @@ export function HouseManager({ canCreate }: { canCreate: boolean }) {
       )}
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-slate-900">Join a house</h2>
+        <h2 className="mb-3 text-sm font-semibold text-slate-900">Request to join a house</h2>
         <form
           className="space-y-3"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (await post("/api/houses/join", { house_id: joinId.trim() })) setJoinId("");
+            if (await post("/api/houses/join", { house_id: joinId.trim() })) {
+              setJoinId("");
+              setRequested(true);
+            }
           }}
         >
-          <Field label="House id" hint="Ask your house admin for this — it's on their houses page.">
+          <Field
+            label="House id"
+            hint="Ask your house admin for this — it's on their houses page. Your request needs their approval before you get access."
+          >
             <input
               className={inputClass}
               value={joinId}
@@ -100,8 +107,13 @@ export function HouseManager({ canCreate }: { canCreate: boolean }) {
             />
           </Field>
           <button type="submit" className={buttonClass} disabled={busy}>
-            Join house
+            Send request
           </button>
+          {requested ? (
+            <p className="text-sm text-slate-600">
+              Request sent — it's pending until a house admin approves it.
+            </p>
+          ) : null}
         </form>
       </Card>
 

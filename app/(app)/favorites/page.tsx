@@ -34,7 +34,17 @@ export default async function FavoritesPage() {
       {favorites.length === 0 ? (
         <EmptyState title="Nothing saved yet" hint="Hit Save on a match to shortlist it here." />
       ) : (
-        <FavoriteList favorites={favorites} />
+        <FavoriteList
+          favorites={favorites.map((f) => ({
+            id: f.id,
+            listing: f.listing && {
+              id: f.listing.id,
+              title: f.listing.title,
+              rent: Number(f.listing.rent),
+              area: f.listing.area,
+            },
+          }))}
+        />
       )}
     </div>
   );
