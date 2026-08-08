@@ -17,11 +17,16 @@
 /supabase/.temp/
 /supabase/.branches/
 
-# local editor / tooling config — never belongs in a shared repo, and these
-# files can capture command history containing credentials
+# local editor / tooling config
 /.claude/
 /.vscode/
 /.idea/
+/.cursor/
+/.cursorrules
+/.copilot/
+/.antigravity*/
+/.aider*
+/.windsurf/
 
 # assignment brief — not part of the application
 *.docx
@@ -34,3 +39,6 @@ npm-debug.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
+.env*

@@ -1,27 +1,22 @@
 import type { Metadata } from "next";
 
-import { NavBar } from "@/components/NavBar";
-import { getSessionUser } from "@/lib/auth";
-import { getPlatformSettings } from "@/lib/settings.server";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Smart Mess & Property Management System",
+  title: "Smart Mess — shared-house management",
   description:
-    "House and mess management: listings, roommate matching, shared wallet, meals, chores and conflict resolution.",
+    "Listings, roommate matching, shared expenses, meals, chores and formal conflict resolution for shared houses.",
 };
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // getPlatformSettings never throws — it falls back to defaults — so an
-  // unreachable settings table costs a custom name, not the whole app.
-  const [user, settings] = await Promise.all([getSessionUser(), getPlatformSettings()]);
-
+/**
+ * Root layout stays deliberately bare. The signed-in shell (sidebar + top bar)
+ * lives in app/(app)/layout.tsx so the public landing page and the login screen
+ * can render full-bleed without it.
+ */
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        <NavBar user={user} platformName={settings.platform_name} />
-        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

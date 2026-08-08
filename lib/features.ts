@@ -50,7 +50,7 @@ export const FEATURES: Feature[] = [
     title: "Profile & Account",
     owner: OWNERS.shared,
     summary:
-      "Registration, login and Google SSO via Supabase Auth, plus profile management (contact info, emergency details).",
+      "Registration, login and Google SSO, plus profile management (contact info, emergency details).",
     href: "/profile",
     api: ["app/api/profile/route.ts"],
     tables: ["profiles"],
