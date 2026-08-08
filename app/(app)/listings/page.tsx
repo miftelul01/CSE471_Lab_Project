@@ -17,7 +17,6 @@ type SearchParams = {
   min_rent?: string;
   max_rent?: string;
   room_type?: string;
-  mine?: string;
 };
 
 /**
@@ -31,16 +30,11 @@ export default async function ListingsPage({ searchParams }: { searchParams: Sea
   const user = await requireUser();
 
   const isLandlord = user.profile.role !== "RESIDENT";
-  const showMine = searchParams.mine === "true" && isLandlord;
 
-  const filters: Prisma.ListingWhereInput[] = [];
-
-  if (showMine) {
-    // The owner's own view includes delisted rows so they can be restored.
-    filters.push({ landlordId: user.id });
-  } else {
-    filters.push({ isActive: true }, listingVisibilityFilter(user));
-  }
+  const filters: Prisma.ListingWhereInput[] = [
+    { isActive: true },
+    listingVisibilityFilter(user),
+  ];
 
   if (searchParams.area) {
     filters.push({ area: { contains: searchParams.area, mode: "insensitive" } });
@@ -66,24 +60,10 @@ export default async function ListingsPage({ searchParams }: { searchParams: Sea
   return (
     <div>
       <PageHeader
-        title={showMine ? "My listings" : "Find a room"}
-        subtitle={
-          showMine
-            ? "Everything you've posted, including delisted properties."
-            : "Search available rooms and houses by budget, area and room type."
-        }
+        title="Find a room"
+        subtitle="Search available rooms and houses by budget, area and room type."
         action={
-          isLandlord ? (
-            <div className="flex gap-2">
-              <Link
-                href={showMine ? "/listings" : "/listings?mine=true"}
-                className="inline-flex items-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                {showMine ? "Browse all" : "My listings"}
-              </Link>
-              <LinkButton href="/listings/new">Post a listing</LinkButton>
-            </div>
-          ) : null
+          isLandlord ? <LinkButton href="/properties">Manage my properties</LinkButton> : null
         }
       />
 
@@ -93,16 +73,8 @@ export default async function ListingsPage({ searchParams }: { searchParams: Sea
 
       {listings.length === 0 ? (
         <EmptyState
-          title={showMine ? "You haven't posted anything yet" : "No listings match those filters"}
-          hint={
-            showMine ? (
-              <Link href="/listings/new" className="underline">
-                Post your first listing
-              </Link>
-            ) : (
-              "Try widening the budget range or clearing the area."
-            )
-          }
+          title="No listings match those filters"
+          hint="Try widening the budget range or clearing the area."
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -111,8 +83,7 @@ export default async function ListingsPage({ searchParams }: { searchParams: Sea
               <Card className="flex h-full flex-col transition hover:border-slate-400">
                 <div className="mb-1 flex items-start justify-between gap-2">
                   <h2 className="font-medium text-slate-900">{listing.title}</h2>
-                  {listing.isActive ? null : <Badge tone="amber">Delisted</Badge>}
-                </div>
+                                  </div>
 
                 <p className="text-sm font-medium text-slate-900">
                   BDT {Number(listing.rent).toLocaleString()}
