@@ -1,0 +1,44 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# env files
+.env
+.env.local
+.env*.local
+
+# supabase cli
+/supabase/.temp/
+/supabase/.branches/
+
+# local editor / tooling config
+/.claude/
+/.vscode/
+/.idea/
+/.cursor/
+/.cursorrules
+/.copilot/
+/.antigravity*/
+/.aider*
+/.windsurf/
+
+# assignment brief — not part of the application
+*.docx
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+.vercel
+.env*
