@@ -1,7 +1,12 @@
 import { badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
 import { assertCanCloseMenuVoting, assertHouseMember } from "@/lib/authz";
-import { mondayOf, validateProposalItems, type ProposalItemInput } from "@/lib/menu";
+import {
+  MAX_PROPOSAL_TITLE_LENGTH,
+  mondayOf,
+  validateProposalItems,
+  type ProposalItemInput,
+} from "@/lib/menu";
 import { prisma } from "@/lib/prisma";
 
 /** M2.2 Weekly Menu Proposal & Voting System — Mahia Tanzin. */
@@ -53,6 +58,10 @@ export const POST = withUser(async (user, req: Request) => {
 
   const itemsError = validateProposalItems(body.items);
   if (itemsError) return badRequest(itemsError);
+
+  if (body.title && String(body.title).trim().length > MAX_PROPOSAL_TITLE_LENGTH) {
+    return badRequest(`Title must be ${MAX_PROPOSAL_TITLE_LENGTH} characters or fewer.`);
+  }
 
   // A week that's already been decided doesn't need more proposals competing
   // for a vote that's already closed.

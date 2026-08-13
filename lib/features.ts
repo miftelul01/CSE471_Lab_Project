@@ -139,8 +139,8 @@ export const FEATURES: Feature[] = [
       "Any resident adds a shared expense; it splits equally or by custom ratio into a per-person ledger showing paid vs pending.",
     href: "/wallet",
     api: ["app/api/expenses/route.ts"],
-    tables: ["expenses", "expense_shares", "house_balances (view)"],
-    status: "todo",
+    tables: ["expenses", "expense_shares"],
+    status: "done",
   },
   {
     id: "M2.2",

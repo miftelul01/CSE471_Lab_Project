@@ -4,7 +4,14 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, Field, buttonClass, inputClass } from "@/components/ui";
-import { DAY_LABELS, MEAL_TYPES, MEAL_TYPE_LABELS, mondayOf } from "@/lib/menu";
+import {
+  DAY_LABELS,
+  MAX_ITEM_DESCRIPTION_LENGTH,
+  MAX_PROPOSAL_TITLE_LENGTH,
+  MEAL_TYPES,
+  MEAL_TYPE_LABELS,
+  mondayOf,
+} from "@/lib/menu";
 import type { MealType } from "@prisma/client";
 
 function defaultWeekStart(): string {
@@ -76,6 +83,7 @@ export function ProposeMenuForm() {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Budget-friendly week"
+              maxLength={MAX_PROPOSAL_TITLE_LENGTH}
             />
           </Field>
           <Field label="Week starting" hint="Any day in the target week works.">
@@ -112,6 +120,7 @@ export function ProposeMenuForm() {
                         value={grid[dayOfWeek]?.[mealType] ?? ""}
                         onChange={(e) => setCell(dayOfWeek, mealType, e.target.value)}
                         placeholder="—"
+                        maxLength={MAX_ITEM_DESCRIPTION_LENGTH}
                         disabled={busy}
                       />
                     </td>

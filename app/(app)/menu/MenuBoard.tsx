@@ -41,11 +41,14 @@ function itemsByDay(items: Item[]) {
 
 export function MenuBoard({
   approvedMenu,
+  approvedIsThisWeek,
   openProposals,
   currentUserId,
   canCloseVoting,
 }: {
   approvedMenu: Proposal | null;
+  /** False when the menu shown is a decided future week rather than this one. */
+  approvedIsThisWeek: boolean;
   openProposals: Proposal[];
   currentUserId: string;
   canCloseVoting: boolean;
@@ -99,7 +102,9 @@ export function MenuBoard({
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-slate-900">This week&apos;s official menu</h2>
+        <h2 className="mb-3 text-sm font-semibold text-slate-900">
+          {approvedIsThisWeek ? "This week's official menu" : "Upcoming official menu"}
+        </h2>
         {approvedMenu ? (
           <Card>
             <div className="mb-3 flex items-start justify-between gap-2">
@@ -107,7 +112,9 @@ export function MenuBoard({
                 <h3 className="font-medium text-slate-900">{approvedMenu.title}</h3>
                 <p className="text-xs text-slate-500">Week of {formatWeek(approvedMenu.weekStartDate)}</p>
               </div>
-              <Badge tone="green">Official</Badge>
+              <Badge tone={approvedIsThisWeek ? "green" : "blue"}>
+                {approvedIsThisWeek ? "Official" : "Decided"}
+              </Badge>
             </div>
             <div className="space-y-3">
               {itemsByDay(approvedMenu.items).map((day) => (
