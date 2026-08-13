@@ -15,6 +15,14 @@ export default async function HousesPage() {
   const user = await requireUser();
   const memberships = await getMyHouses(user.id);
 
+  // Requests sent via "Request to join a house" that a house admin hasn't
+  // approved yet — status PENDING grants no access, so this is the only place
+  // that confirms the request actually went somewhere.
+  const pendingRequests = await prisma.houseMember.findMany({
+    where: { userId: user.id, status: "PENDING" },
+    include: { house: { select: { name: true } } },
+  });
+
   // Housemates for the primary house, so people can see who they share with.
   const housemates = memberships[0]
     ? await prisma.houseMember.findMany({
@@ -55,6 +63,20 @@ export default async function HousesPage() {
             </Card>
           ))
         )}
+
+        {pendingRequests.length > 0 ? (
+          <Card>
+            <h2 className="mb-2 text-sm font-semibold text-slate-900">Pending requests</h2>
+            <ul className="divide-y divide-slate-100 text-sm">
+              {pendingRequests.map((request) => (
+                <li key={request.id} className="flex items-center justify-between py-2">
+                  <span>{request.house.name}</span>
+                  <Badge tone="amber">Awaiting approval</Badge>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
 
         {housemates.length > 0 ? (
           <Card>

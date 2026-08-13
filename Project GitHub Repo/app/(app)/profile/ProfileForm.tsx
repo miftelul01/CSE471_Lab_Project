@@ -11,7 +11,12 @@ const ROLES: { value: UserRole; label: string; hint: string }[] = [
   { value: "LANDLORD", label: "Landlord / House admin", hint: "Owns or manages property" },
 ];
 
-export function ProfileForm({ profile }: { profile: User }) {
+// Excludes passwordHash — it must never reach a client component. See
+// lib/auth.ts getSessionUser(), which already omits it at the source; this
+// type just makes it impossible to widen that back by accident here.
+type ProfileValues = Omit<User, "passwordHash">;
+
+export function ProfileForm({ profile }: { profile: ProfileValues }) {
   const router = useRouter();
   const [form, setForm] = useState({
     name: profile.name,

@@ -4,11 +4,15 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, buttonClass, secondaryButtonClass } from "@/components/ui";
-import type { Favorite, Listing } from "@prisma/client";
 
-type FavoriteWithListing = Favorite & { listing: Listing | null };
+// rent is a plain number here, not Prisma Decimal — Decimal instances cannot
+// cross the Server -> Client Component boundary (see app/(app)/favorites/page.tsx).
+export type FavoriteRow = {
+  id: string;
+  listing: { id: string; title: string; rent: number; area: string } | null;
+};
 
-export function FavoriteList({ favorites }: { favorites: FavoriteWithListing[] }) {
+export function FavoriteList({ favorites }: { favorites: FavoriteRow[] }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
