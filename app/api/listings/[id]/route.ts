@@ -1,5 +1,5 @@
 import { badRequest, notFound, ok, readJson, withUser } from "@/lib/api";
-import { assertCanEditListing } from "@/lib/authz";
+import { assertCanEditListing, listingVisibilityFilter } from "@/lib/authz";
 import { validateListing, type ListingInput } from "@/lib/listings";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
@@ -10,9 +10,12 @@ type Params = { params: { id: string } };
 
 export const dynamic = "force-dynamic";
 
-export const GET = withUser(async (_user, _req: Request, { params }: Params) => {
-  const listing = await prisma.listing.findUnique({
-    where: { id: params.id },
+export const GET = withUser(async (user, _req: Request, { params }: Params) => {
+  // Same visibility rule the search list uses — without it, a delisted room or
+  // one an admin removed for breaking the rules is still fully readable (landlord
+  // contact info included) to anyone who has or guesses its id.
+  const listing = await prisma.listing.findFirst({
+    where: { id: params.id, ...listingVisibilityFilter(user) },
     include: {
       house: { select: { id: true, name: true } },
       landlord: { select: { name: true, email: true, phone: true } },
