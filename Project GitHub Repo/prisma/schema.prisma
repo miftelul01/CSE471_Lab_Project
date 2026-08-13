@@ -1,0 +1,888 @@
+// Smart Mess & Property Management System — database schema.
+//
+// Columns and tables are mapped to snake_case with @map/@@map so raw SQL
+// (the triggers in prisma/migrations/*/migration.sql) stays readable, while
+// TypeScript keeps idiomatic camelCase.
+//
+//   npx prisma migrate dev --name <what-you-changed>   apply a schema change
+//   npx prisma generate                                refresh the typed client
+//   npx prisma studio                                  browse the data
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Pooled connection, used by the app at runtime.
+  url       = env("DATABASE_URL")
+  // Direct (unpooled) connection. Migrations need this because a pooler
+  // can't run the DDL and advisory locks Prisma Migrate relies on.
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  RESIDENT
+  LANDLORD
+  ADMIN
+}
+
+enum MembershipStatus {
+  ACTIVE
+  PENDING
+  LEFT
+}
+
+enum SleepSchedule {
+  EARLY_BIRD
+  NIGHT_OWL
+  FLEXIBLE
+}
+
+enum CleanlinessLevel {
+  VERY_TIDY
+  MODERATE
+  RELAXED
+}
+
+enum RoomType {
+  SINGLE
+  SHARED
+  MASTER
+  SEAT
+  ENTIRE_FLAT
+}
+
+enum JoinRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum PostStatus {
+  PUBLISHED
+  REMOVED
+}
+
+enum GuestStatus {
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+}
+
+enum SplitMethod {
+  EQUAL
+  CUSTOM
+  SHARES
+}
+
+enum ExpenseCategory {
+  RENT
+  UTILITIES
+  GROCERIES
+  MAINTENANCE
+  OTHER
+}
+
+enum ShareStatus {
+  PENDING
+  PAID
+  WAIVED
+}
+
+enum ProposalStatus {
+  DRAFT
+  OPEN
+  APPROVED
+  REJECTED
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+}
+
+enum AttendanceStatus {
+  ATTENDING
+  SKIPPING
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum PaymentProvider {
+  BKASH
+  STRIPE
+  CASH
+  MANUAL
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum ChoreFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum ChoreAssignmentStatus {
+  PENDING
+  COMPLETED
+  MISSED
+}
+
+enum DisputeState {
+  RAISED
+  VOTING
+  RESOLVED
+  ESCALATED
+  ARCHIVED
+}
+
+enum DisputeVoteValue {
+  FOR
+  AGAINST
+  ABSTAIN
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth (NextAuth / Auth.js — field names here are fixed by the Prisma adapter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  // NextAuth uses `name` and `image`; for us they're the full name and avatar.
+  name          String    @default("")
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+
+  // Set only for email/password sign-ups. Google users have none, which is
+  // why the credentials provider must reject a null hash rather than compare.
+  passwordHash String? @map("password_hash")
+
+  role                  UserRole @default(RESIDENT)
+  phone                 String?
+  emergencyContactName  String?  @map("emergency_contact_name")
+  emergencyContactPhone String?  @map("emergency_contact_phone")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accounts Account[]
+  sessions Session[]
+
+  housesOwned        House[]                  @relation("HouseLandlord")
+  memberships        HouseMember[]
+  listings           Listing[]
+  listingsRemoved    Listing[]                  @relation("ListingRemovedBy")
+  roommatePosts      RoommatePost[]             @relation("RoommatePostPostedBy")
+  roommatePostsRemoved RoommatePost[]           @relation("RoommatePostRemovedBy")
+  roommateApplications RoommateApplication[]
+  preference         Preference?
+  matches            Match[]
+  favorites          Favorite[]
+  joinRequests       JoinRequest[]
+  guestLogs          GuestLog[]
+  expensesCreated    Expense[]
+  expenseShares      ExpenseShare[]
+  menuProposals      MenuProposal[]
+  menuVotes          MenuVote[]
+  mealAttendance     MealAttendance[]
+  ticketsReported    MaintenanceTicket[]      @relation("TicketReporter")
+  ticketsAssigned    MaintenanceTicket[]      @relation("TicketAssignee")
+  ticketEvents       MaintenanceTicketEvent[]
+  payments           Payment[]
+  choreAssignments   ChoreAssignment[]
+  disputesRaised     Dispute[]                @relation("DisputeRaiser")
+  disputesAgainst    Dispute[]                @relation("DisputeSubject")
+  disputeVotes       DisputeVote[]
+  disputeEvents      DisputeEvent[]
+  googleCredential   GoogleCredential?
+  settingsUpdated    PlatformSetting[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Common workflows — houses and membership
+// ─────────────────────────────────────────────────────────────────────────────
+
+model House {
+  id               String   @id @default(uuid())
+  name             String
+  address          String
+  area             String?
+  latitude         Float?
+  longitude        Float?
+  landlordId       String?  @map("landlord_id")
+  googleCalendarId String?  @map("google_calendar_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  landlord User? @relation("HouseLandlord", fields: [landlordId], references: [id], onDelete: SetNull)
+
+  members        HouseMember[]
+  listings       Listing[]
+  guestLogs      GuestLog[]
+  expenses       Expense[]
+  menuProposals  MenuProposal[]
+  meals          Meal[]
+  tickets        MaintenanceTicket[]
+  payments       Payment[]
+  chores         Chore[]
+  disputes       Dispute[]
+  roommatePosts  RoommatePost[]
+  calendarEvents CalendarEvent[]
+
+  @@index([landlordId])
+  @@map("houses")
+}
+
+model HouseMember {
+  id           String           @id @default(uuid())
+  houseId      String           @map("house_id")
+  userId       String           @map("user_id")
+  role         UserRole         @default(RESIDENT)
+  isHouseAdmin Boolean          @default(false) @map("is_house_admin")
+  status       MembershipStatus @default(ACTIVE)
+  joinedAt     DateTime         @default(now()) @map("joined_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([houseId, userId])
+  @@index([userId])
+  @@index([houseId])
+  @@map("house_members")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1.1 Property & Room Listing Engine — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Listing {
+  id            String            @id @default(uuid())
+  landlordId    String            @map("landlord_id")
+  houseId       String?           @map("house_id")
+  title         String
+  description   String            @default("")
+  rent          Decimal           @db.Decimal(10, 2)
+  area          String
+  address       String?
+  roomType      RoomType          @default(SINGLE) @map("room_type")
+  capacity      Int               @default(1)
+  amenities     String[]          @default([])
+  latitude      Float?
+  longitude     Float?
+  isActive      Boolean           @default(true) @map("is_active")
+  sleepSchedule SleepSchedule?    @map("sleep_schedule")
+  cleanliness   CleanlinessLevel?
+  allowsSmoking Boolean?          @map("allows_smoking")
+  allowsPets    Boolean?          @map("allows_pets")
+  status        PostStatus        @default(PUBLISHED)
+  removedReason String?           @map("removed_reason")
+  removedAt     DateTime?         @map("removed_at")
+  removedById   String?           @map("removed_by")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  landlord User   @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+  house    House? @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  removedBy User? @relation("ListingRemovedBy", fields: [removedById], references: [id], onDelete: SetNull)
+
+  matches      Match[]
+  favorites    Favorite[]
+  joinRequests JoinRequest[]
+
+  @@index([landlordId])
+  @@index([houseId])
+  @@index([area])
+  @@index([rent])
+  @@map("listings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1.2 Smart Roommate & House Matching — Mahia Tanzin
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RoommatePost {
+  id              String               @id @default(uuid())
+  houseId         String               @map("house_id")
+  postedById      String               @map("posted_by")
+  title           String
+  description     String               @default("")
+  monthlyShare    Decimal              @db.Decimal(10, 2) @map("monthly_share")
+  seatsAvailable  Int                  @default(1) @map("seats_available")
+  availableFrom   DateTime?            @map("available_from")
+  sleepSchedule   SleepSchedule?       @map("sleep_schedule")
+  cleanliness     CleanlinessLevel?
+  petsOk          Boolean?             @map("pets_ok")
+  isActive        Boolean              @default(true) @map("is_active")
+  status          PostStatus           @default(PUBLISHED)
+  removedReason   String?              @map("removed_reason")
+  removedAt       DateTime?            @map("removed_at")
+  removedById     String?              @map("removed_by")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  house         House                  @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  postedBy      User                   @relation("RoommatePostPostedBy", fields: [postedById], references: [id], onDelete: Cascade)
+  removedBy     User?                  @relation("RoommatePostRemovedBy", fields: [removedById], references: [id], onDelete: SetNull)
+  applications  RoommateApplication[]
+
+  @@index([houseId])
+  @@index([postedById])
+  @@index([status])
+  @@map("roommate_posts")
+}
+
+model RoommateApplication {
+  id        String           @id @default(uuid())
+  postId    String           @map("post_id")
+  userId    String           @map("user_id")
+  message   String?
+  status    JoinRequestStatus @default(PENDING)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  post RoommatePost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([userId])
+  @@map("roommate_applications")
+}
+
+model Preference {
+  userId        String           @id @map("user_id")
+  budgetMin     Decimal          @map("budget_min") @db.Decimal(10, 2)
+  budgetMax     Decimal          @map("budget_max") @db.Decimal(10, 2)
+  sleepSchedule SleepSchedule    @map("sleep_schedule")
+  cleanliness   CleanlinessLevel
+  smokingOk     Boolean          @default(false) @map("smoking_ok")
+  petsOk        Boolean          @default(false) @map("pets_ok")
+  preferredArea String?          @map("preferred_area")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("preferences")
+}
+
+model Match {
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  listingId          String   @map("listing_id")
+  compatibilityScore Decimal  @map("compatibility_score") @db.Decimal(4, 3)
+  rank               Int
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@index([userId, rank])
+  @@map("matches")
+}
+
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  listingId String   @map("listing_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@map("favorites")
+}
+
+model JoinRequest {
+  id        String            @id @default(uuid())
+  userId    String            @map("user_id")
+  listingId String            @map("listing_id")
+  status    JoinRequestStatus @default(PENDING)
+  message   String?
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@map("join_requests")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1.3 Guest Registration & Accountability Log — Md. Mahidul Alam Araf
+// ─────────────────────────────────────────────────────────────────────────────
+
+model GuestLog {
+  id               String      @id @default(uuid())
+  houseId          String      @map("house_id")
+  hostUserId       String      @map("host_user_id")
+  guestName        String      @map("guest_name")
+  guestPhone       String?     @map("guest_phone")
+  purpose          String?
+  expectedCheckOut DateTime?   @map("expected_check_out")
+  checkedInAt      DateTime    @default(now()) @map("checked_in_at")
+  checkedOutAt     DateTime?   @map("checked_out_at")
+  status           GuestStatus @default(CHECKED_IN)
+  notifiedAdminAt  DateTime?   @map("notified_admin_at")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  host  User  @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@index([houseId, checkedInAt(sort: Desc)])
+  @@map("guest_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.1 Shared Wallet & Bill-Splitting — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Expense {
+  id          String          @id @default(uuid())
+  houseId     String          @map("house_id")
+  createdById String          @map("created_by")
+  title       String
+  description String?
+  amount      Decimal         @db.Decimal(12, 2)
+  category    ExpenseCategory @default(OTHER)
+  splitMethod SplitMethod     @default(EQUAL) @map("split_method")
+  spentOn     DateTime        @default(now()) @map("spent_on") @db.Date
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  house     House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  shares ExpenseShare[]
+
+  @@index([houseId, spentOn(sort: Desc)])
+  @@map("expenses")
+}
+
+model ExpenseShare {
+  id        String      @id @default(uuid())
+  expenseId String      @map("expense_id")
+  userId    String      @map("user_id")
+  amount    Decimal     @db.Decimal(12, 2)
+  status    ShareStatus @default(PENDING)
+  settledAt DateTime?   @map("settled_at")
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  payments Payment[]
+
+  @@unique([expenseId, userId])
+  @@index([userId, status])
+  @@map("expense_shares")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.2 Weekly Menu Proposal & Voting — Mahia Tanzin
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MenuProposal {
+  id             String         @id @default(uuid())
+  houseId        String         @map("house_id")
+  proposedById   String         @map("proposed_by")
+  title          String
+  weekStartDate  DateTime       @map("week_start_date") @db.Date
+  status         ProposalStatus @default(OPEN)
+  votingClosesAt DateTime?      @map("voting_closes_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  house      House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  proposedBy User  @relation(fields: [proposedById], references: [id], onDelete: Cascade)
+
+  items MenuProposalItem[]
+  votes MenuVote[]
+  meals Meal[]
+
+  @@index([houseId, weekStartDate(sort: Desc)])
+  @@map("menu_proposals")
+}
+
+model MenuProposalItem {
+  id          String   @id @default(uuid())
+  proposalId  String   @map("proposal_id")
+  dayOfWeek   Int      @map("day_of_week") @db.SmallInt
+  mealType    MealType @map("meal_type")
+  description String
+
+  proposal MenuProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, dayOfWeek, mealType])
+  @@map("menu_proposal_items")
+}
+
+model MenuVote {
+  id         String   @id @default(uuid())
+  proposalId String   @map("proposal_id")
+  userId     String   @map("user_id")
+  vote       Int      @db.SmallInt
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  proposal MenuProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, userId])
+  @@map("menu_votes")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.3 Meal Attendance & Auto-Quantity — Md. Mahidul Alam Araf
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Meal {
+  id             String    @id @default(uuid())
+  houseId        String    @map("house_id")
+  mealDate       DateTime  @map("meal_date") @db.Date
+  mealType       MealType  @map("meal_type")
+  menuProposalId String?   @map("menu_proposal_id")
+  costPerHead    Decimal?  @map("cost_per_head") @db.Decimal(10, 2)
+  headcount      Int       @default(0)
+  locksAt        DateTime? @map("locks_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  house        House         @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  menuProposal MenuProposal? @relation(fields: [menuProposalId], references: [id], onDelete: SetNull)
+
+  attendance MealAttendance[]
+
+  @@unique([houseId, mealDate, mealType])
+  @@index([houseId, mealDate(sort: Desc)])
+  @@map("meals")
+}
+
+model MealAttendance {
+  id        String           @id @default(uuid())
+  mealId    String           @map("meal_id")
+  userId    String           @map("user_id")
+  status    AttendanceStatus @default(ATTENDING)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  meal Meal @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([mealId, userId])
+  @@map("meal_attendance")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.1 Maintenance Ticket System — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MaintenanceTicket {
+  id           String         @id @default(uuid())
+  houseId      String         @map("house_id")
+  reportedById String         @map("reported_by")
+  assignedToId String?        @map("assigned_to")
+  title        String
+  description  String         @default("")
+  category     String?
+  status       TicketStatus   @default(OPEN)
+  priority     TicketPriority @default(MEDIUM)
+  photoUrl     String?        @map("photo_url")
+  resolvedAt   DateTime?      @map("resolved_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  house      House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  reportedBy User  @relation("TicketReporter", fields: [reportedById], references: [id], onDelete: Cascade)
+  assignedTo User? @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  events MaintenanceTicketEvent[]
+
+  @@index([houseId, createdAt(sort: Desc)])
+  @@map("maintenance_tickets")
+}
+
+model MaintenanceTicketEvent {
+  id         String        @id @default(uuid())
+  ticketId   String        @map("ticket_id")
+  actorId    String?       @map("actor_id")
+  fromStatus TicketStatus? @map("from_status")
+  toStatus   TicketStatus  @map("to_status")
+  note       String?
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  ticket MaintenanceTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User?             @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("maintenance_ticket_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.2 Payment Integration (bKash / Stripe) — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Payment {
+  id                String          @id @default(uuid())
+  userId            String          @map("user_id")
+  houseId           String?         @map("house_id")
+  expenseShareId    String?         @map("expense_share_id")
+  provider          PaymentProvider
+  status            PaymentStatus   @default(INITIATED)
+  amount            Decimal         @db.Decimal(12, 2)
+  currency          String          @default("BDT")
+  providerPaymentId String?         @map("provider_payment_id")
+  providerPayload   Json?           @map("provider_payload")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  house        House?        @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  expenseShare ExpenseShare? @relation(fields: [expenseShareId], references: [id], onDelete: SetNull)
+
+  // Idempotency: a gateway retrying its webhook must not create a second row.
+  @@unique([provider, providerPaymentId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.4 Automated Chore Rotation (Google Tasks) — Mahia Tanzin
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Chore {
+  id                String         @id @default(uuid())
+  houseId           String         @map("house_id")
+  name              String
+  description       String?
+  frequency         ChoreFrequency @default(WEEKLY)
+  // Ordered rotation ring of user ids.
+  rotationOrder     String[]       @default([]) @map("rotation_order")
+  // Cursor into rotationOrder; -1 means nobody assigned yet.
+  lastAssignedIndex Int            @default(-1) @map("last_assigned_index")
+  isActive          Boolean        @default(true) @map("is_active")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  house       House             @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  assignments ChoreAssignment[]
+
+  @@index([houseId])
+  @@map("chores")
+}
+
+model ChoreAssignment {
+  id           String                @id @default(uuid())
+  choreId      String                @map("chore_id")
+  userId       String                @map("user_id")
+  dueDate      DateTime              @map("due_date") @db.Date
+  status       ChoreAssignmentStatus @default(PENDING)
+  completedAt  DateTime?             @map("completed_at")
+  googleTaskId String?               @map("google_task_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+
+  chore Chore @relation(fields: [choreId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Running the rotation job twice for one period must not double-assign.
+  @@unique([choreId, dueDate])
+  @@index([userId, dueDate(sort: Desc)])
+  @@map("chore_assignments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.5 Mess Court (Conflict-Resolution State Machine) — Md. Mahidul Alam Araf
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Dispute {
+  id              String       @id @default(uuid())
+  houseId         String       @map("house_id")
+  raisedById      String       @map("raised_by")
+  againstUserId   String?      @map("against_user_id")
+  title           String
+  description     String       @default("")
+  category        String?
+  state           DisputeState @default(RAISED)
+  votingStartedAt DateTime?    @map("voting_started_at")
+  votingDeadline  DateTime?    @map("voting_deadline")
+  resolution      String?
+  resolvedAt      DateTime?    @map("resolved_at")
+  escalatedAt     DateTime?    @map("escalated_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  house       House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  raisedBy    User  @relation("DisputeRaiser", fields: [raisedById], references: [id], onDelete: Cascade)
+  againstUser User? @relation("DisputeSubject", fields: [againstUserId], references: [id], onDelete: SetNull)
+
+  votes  DisputeVote[]
+  events DisputeEvent[]
+
+  @@index([houseId, state])
+  @@index([votingDeadline])
+  @@map("disputes")
+}
+
+model DisputeVote {
+  id        String           @id @default(uuid())
+  disputeId String           @map("dispute_id")
+  userId    String           @map("user_id")
+  vote      DisputeVoteValue
+  comment   String?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  dispute Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([disputeId, userId])
+  @@map("dispute_votes")
+}
+
+model DisputeEvent {
+  id        String        @id @default(uuid())
+  disputeId String        @map("dispute_id")
+  actorId   String?       @map("actor_id")
+  fromState DisputeState? @map("from_state")
+  toState   DisputeState  @map("to_state")
+  note      String?
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  dispute Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([disputeId, createdAt])
+  @@map("dispute_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.4 / M3.6 Google integrations
+// ─────────────────────────────────────────────────────────────────────────────
+
+model GoogleCredential {
+  userId       String    @id @map("user_id")
+  accessToken  String?   @map("access_token")
+  refreshToken String?   @map("refresh_token")
+  expiresAt    DateTime? @map("expires_at")
+  scopes       String[]  @default([])
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("google_credentials")
+}
+
+model CalendarEvent {
+  id            String    @id @default(uuid())
+  houseId       String    @map("house_id")
+  // Which feature produced it: RENT_DUE | GUEST | DISPUTE | CHORE | MEAL
+  sourceType    String    @map("source_type")
+  sourceId      String?   @map("source_id")
+  title         String
+  description   String?
+  startsAt      DateTime  @map("starts_at")
+  endsAt        DateTime? @map("ends_at")
+  googleEventId String?   @map("google_event_id")
+  syncedAt      DateTime? @map("synced_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+
+  // Re-syncing updates the existing event instead of duplicating it.
+  @@unique([sourceType, sourceId])
+  @@index([houseId, startsAt])
+  @@map("calendar_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Common workflow — admin activities
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  description String   @default("")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by")
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("platform_settings")
+}
