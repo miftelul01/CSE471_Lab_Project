@@ -56,33 +56,28 @@ export async function getAdministeredHouses(userId: string): Promise<House[]> {
   return memberships.map((m) => m.house);
 }
 
-/**
- * Admits a user into a house, applying the flat-admin rule.
- *
- * The FIRST resident to join a house becomes its flat admin — the person who
- * runs the household day to day, and the one who may advertise a spare seat to
- * prospective roommates. The landlord owns the property and is a house admin
- * by virtue of that, but they typically do not live there, so somebody inside
- * the flat has to be in charge.
- *
- * Later joiners are ordinary residents; the flat admin can hand the role over.
- */
 export async function admitToHouse(
   tx: Prisma.TransactionClient,
   houseId: string,
   userId: string,
   role: UserRole = "RESIDENT"
-) {
-  const existingFlatAdmin = await tx.houseMember.findFirst({
-    where: { houseId, status: "ACTIVE", isHouseAdmin: true, role: "RESIDENT" },
+): Promise<void> {
+  const existing = await tx.houseMember.findFirst({
+    where: { houseId, userId },
     select: { id: true },
   });
 
-  const isFirstResident = role === "RESIDENT" && existingFlatAdmin === null;
+  if (existing) {
+    return;
+  }
 
-  return tx.houseMember.upsert({
-    where: { houseId_userId: { houseId, userId } },
-    create: { houseId, userId, role, status: "ACTIVE", isHouseAdmin: isFirstResident },
-    update: { status: "ACTIVE" },
+  await tx.houseMember.create({
+    data: {
+      houseId,
+      userId,
+      role,
+      isHouseAdmin: false,
+      status: "ACTIVE",
+    },
   });
 }
