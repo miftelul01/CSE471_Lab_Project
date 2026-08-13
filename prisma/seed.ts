@@ -246,35 +246,52 @@ async function main() {
   console.log("Creating shared expenses…");
   const electricity = await prisma.expense.create({
     data: {
-      houseId: houseIds.bashundhara, createdById: ids.miftelul,
+      // Logged by the landlord, but Nusrat is the one who actually paid the
+      // bill — so her own share is settled from the start and the house owes
+      // her, not the other way round.
+      houseId: houseIds.bashundhara, createdById: ids.miftelul, paidById: ids.nusrat,
       title: "August electricity bill", description: "Meter reading 4102 units.",
       amount: 3200, category: "UTILITIES", splitMethod: "EQUAL", spentOn: daysAgo(6),
-      shares: { create: [{ userId: ids.nusrat, amount: 1600 }, { userId: ids.tanvir, amount: 1600 }] },
+      shares: {
+        create: [
+          { userId: ids.nusrat, amount: 1600, status: "PAID", settledAt: daysAgo(6) },
+          { userId: ids.tanvir, amount: 1600 },
+        ],
+      },
     },
     include: { shares: true },
   });
   await prisma.expense.create({
     data: {
-      houseId: houseIds.bashundhara, createdById: ids.nusrat,
+      houseId: houseIds.bashundhara, createdById: ids.nusrat, paidById: ids.nusrat,
       title: "Groceries — first week", description: "Rice, lentils, oil, vegetables.",
       amount: 4500, category: "GROCERIES", splitMethod: "EQUAL", spentOn: daysAgo(3),
-      shares: { create: [{ userId: ids.nusrat, amount: 2250 }, { userId: ids.tanvir, amount: 2250 }] },
+      shares: {
+        create: [
+          { userId: ids.nusrat, amount: 2250, status: "PAID", settledAt: daysAgo(3) },
+          { userId: ids.tanvir, amount: 2250 },
+        ],
+      },
     },
   });
 
   // Insert as INITIATED then advance to SUCCEEDED, so the payments trigger
   // fires and really does flip the ledger row — the path a verified webhook takes.
-  const nusratShare = electricity.shares.find((s) => s.userId === ids.nusrat)!;
+  // Tanvir reimburses Nusrat for his half of the electricity through the app.
+  const tanvirShare = electricity.shares.find((s) => s.userId === ids.tanvir)!;
   const payment = await prisma.payment.create({
     data: {
-      userId: ids.nusrat, houseId: houseIds.bashundhara, expenseShareId: nusratShare.id,
+      userId: ids.tanvir, houseId: houseIds.bashundhara, expenseShareId: tanvirShare.id,
       provider: "BKASH", status: "INITIATED", amount: 1600, currency: "BDT",
       providerPaymentId: `demo-bkash-${Date.now()}`,
     },
   });
   await prisma.payment.update({ where: { id: payment.id }, data: { status: "SUCCEEDED" } });
-  const settled = await prisma.expenseShare.findUnique({ where: { id: nusratShare.id } });
-  console.log(`  2 expenses, 4 shares, 1 bKash payment — ledger row is now ${settled?.status}`);
+  const settled = await prisma.expenseShare.findUnique({ where: { id: tanvirShare.id } });
+  const trail = await prisma.expenseShareEvent.count({ where: { shareId: tanvirShare.id } });
+  console.log(
+    `  2 expenses, 4 shares, 1 bKash payment — ledger row is now ${settled?.status}, ${trail} audit event(s)`
+  );
 
   console.log("Creating Mess Court disputes…");
   const mk = (raisedBy: string, against: string, title: string, description: string, category: string) =>

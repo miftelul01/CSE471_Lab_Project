@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { SessionUser } from "@/lib/auth";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, ShareStatus } from "@prisma/client";
 
 /**
  * Authorization layer.
@@ -184,6 +184,117 @@ export async function assertCanSetJoinRequestStatus(
     throw new AuthzError("Only the applicant can withdraw their own request.");
   }
   return request;
+}
+
+/* ── Shared wallet (M2.1) ───────────────────────────────────────────────── */
+
+/**
+ * Who may move a ledger row between PENDING / PAID / WAIVED.
+ *
+ * Marking your own share paid is the "I handed the cash over" path. The card
+ * and bKash route to the same rows is another area's, and goes through a
+ * verified webhook rather than this endpoint.
+ *
+ * Waiving is different in kind from paying: it forgives money the house is
+ * owed, so it stays with the house admin whoever the share belongs to. Letting
+ * residents waive their own share would make the ledger meaningless.
+ */
+export async function assertCanSettleShare(
+  user: SessionUser,
+  shareId: string,
+  status: ShareStatus
+) {
+  const share = await prisma.expenseShare.findUnique({
+    where: { id: shareId },
+    select: {
+      userId: true,
+      status: true,
+      expense: { select: { houseId: true } },
+      payments: { where: { status: "SUCCEEDED" }, select: { id: true }, take: 1 },
+    },
+  });
+  if (!share) throw new AuthzError("No such expense share", 404);
+
+  // Checked before the role checks, so it binds everyone including a platform
+  // administrator: a share a gateway really settled is evidence that money
+  // moved. Hand-editing it back to pending would make the ledger contradict
+  // the payment record. The way back is a refund, not this endpoint.
+  if (share.payments.length > 0 && status !== "PAID") {
+    throw new AuthzError(
+      "This share was settled by a recorded payment — refund the payment instead of editing the ledger."
+    );
+  }
+
+  if (isPlatformAdmin(user)) return share;
+
+  const houseAdmin = await isHouseAdmin(user.id, share.expense.houseId);
+
+  if (status === "WAIVED" && !houseAdmin) {
+    throw new AuthzError("Only your house admin can waive someone's share.");
+  }
+  // Reversing a waiver re-imposes a debt the house admin chose to forgive, so
+  // it is the same governance decision as granting it — including on your own
+  // row, which you would otherwise be free to un-waive.
+  if (share.status === "WAIVED" && !houseAdmin) {
+    throw new AuthzError("Only your house admin can reverse a waived share.");
+  }
+  if (share.userId !== user.id && !houseAdmin) {
+    throw new AuthzError("You can only settle your own share.");
+  }
+  return share;
+}
+
+/**
+ * Who may delete a shared expense: whoever added it, or the house admin.
+ *
+ * Deletion exists because a mistyped amount charges the whole house and there
+ * is otherwise no way back. It stops being available the moment anybody has
+ * settled against it — see the state check, which binds every role.
+ */
+export async function assertCanDeleteExpense(user: SessionUser, expenseId: string) {
+  const expense = await prisma.expense.findUnique({
+    where: { id: expenseId },
+    select: {
+      houseId: true,
+      createdById: true,
+      paidById: true,
+      shares: {
+        select: {
+          userId: true,
+          status: true,
+          payments: { where: { status: "SUCCEEDED" }, select: { id: true }, take: 1 },
+        },
+      },
+    },
+  });
+  if (!expense) throw new AuthzError("No such expense", 404);
+
+  // Permission first, so someone with no business here learns nothing about
+  // the state of an expense they cannot touch.
+  const permitted =
+    isPlatformAdmin(user) ||
+    expense.createdById === user.id ||
+    (await isHouseAdmin(user.id, expense.houseId));
+  if (!permitted) {
+    throw new AuthzError("Only whoever added this expense, or your house admin, can delete it.");
+  }
+
+  // The payer's own share is auto-settled the moment the expense is added —
+  // it records that they paid the bill, not that anybody reimbursed them. If
+  // it counted as settlement here, no expense could ever be deleted.
+  // What blocks deletion is somebody ELSE having handed money over.
+  const settled = expense.shares.some(
+    (share) =>
+      share.payments.length > 0 ||
+      (share.status === "PAID" && share.userId !== expense.paidById)
+  );
+  if (settled) {
+    throw new AuthzError(
+      "Someone has already paid their share of this expense, so it can no longer be deleted. Waive the unpaid shares instead."
+    );
+  }
+
+  return expense;
 }
 
 /* ── Menu voting (M2.2) ─────────────────────────────────────────────────── */

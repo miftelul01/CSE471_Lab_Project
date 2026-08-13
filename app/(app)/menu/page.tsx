@@ -2,6 +2,7 @@ import { MenuBoard } from "./MenuBoard";
 import { EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import { getActiveHouseId, requireUser } from "@/lib/auth";
 import { isHouseAdmin } from "@/lib/authz";
+import { mondayOf } from "@/lib/menu";
 import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "Weekly menu — Smart Mess" };
@@ -39,7 +40,18 @@ export default async function MenuPage() {
     isHouseAdmin(user.id, houseId),
   ]);
 
-  const approvedMenu = proposals.find((p) => p.status === "APPROVED") ?? null;
+  // `proposals` is sorted by week descending, so simply taking the first
+  // APPROVED row returns whichever week is furthest in the future — and then
+  // labels it "this week's". Pick the current week explicitly, and fall back to
+  // the nearest upcoming one only when this week has not been decided yet.
+  const thisMonday = mondayOf(new Date()).getTime();
+  const approved = proposals.filter((p) => p.status === "APPROVED");
+
+  const currentMenu = approved.find((p) => p.weekStartDate.getTime() === thisMonday) ?? null;
+  const upcomingMenu = currentMenu
+    ? null
+    : ([...approved].reverse().find((p) => p.weekStartDate.getTime() > thisMonday) ?? null);
+
   const openProposals = proposals.filter((p) => p.status === "OPEN");
 
   return (
@@ -51,7 +63,8 @@ export default async function MenuPage() {
       />
 
       <MenuBoard
-        approvedMenu={approvedMenu}
+        approvedMenu={currentMenu ?? upcomingMenu}
+        approvedIsThisWeek={Boolean(currentMenu)}
         openProposals={openProposals}
         currentUserId={user.id}
         canCloseVoting={canClose}
