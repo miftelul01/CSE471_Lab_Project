@@ -1,0 +1,28 @@
+# Neon PostgreSQL — pooled connection, used by the app at runtime.
+# pgbouncer=true tells Prisma not to use prepared statements, which a
+# transaction pooler cannot hold across queries.
+DATABASE_URL="postgresql://neondb_owner:npg_CR4nJ1vVXQka@ep-royal-flower-az5qvy90-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&pgbouncer=true&connect_timeout=15"
+
+# Direct (unpooled) connection — same host without "-pooler".
+# Prisma Migrate needs this: a pooler can't run its DDL or hold advisory locks.
+DIRECT_URL="postgresql://neondb_owner:npg_CR4nJ1vVXQka@ep-royal-flower-az5qvy90.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+
+# Signs the session cookie. Generated locally; never commit it.
+AUTH_SECRET="3l4uukZ9CdBnGhzcrDhSGU7iBrCr6Qt3igO13dX6TF0="
+AUTH_URL="http://localhost:3000"
+NEXT_PUBLIC_SITE_URL="http://localhost:3000"
+
+# --- Google SSO (fill in from Google Cloud Console) ---
+AUTH_GOOGLE_ID=""
+AUTH_GOOGLE_SECRET=""
+
+# --- Module 3 integrations (leave blank until you get to that feature) ---
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=""
+STRIPE_SECRET_KEY=""
+STRIPE_WEBHOOK_SECRET=""
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=""
+BKASH_APP_KEY=""
+BKASH_APP_SECRET=""
+BKASH_USERNAME=""
+BKASH_PASSWORD=""
+BKASH_BASE_URL="https://tokenized.sandbox.bka.sh/v1.2.0-beta"
