@@ -9,7 +9,7 @@ export default async function CalendarPage() {
 
   return (
     <FeatureStub
-      featureId="another area"
+      featureId="M3.6"
       checklist={[
         "List upcoming house events from GET /api/calendar, with a badge showing which feature each came from.",
         "Collect the events worth syncing: rent due dates, guest check-in windows, dispute deadlines, chore due dates.",

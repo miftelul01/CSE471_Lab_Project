@@ -9,7 +9,7 @@ export default async function ChoresPage() {
 
   return (
     <FeatureStub
-      featureId="another area"
+      featureId="M3.4"
       checklist={[
         "List the house's chores and this week's assignments from GET /api/chores.",
         "House-admin form to create a chore: name, frequency, and rotation_order (an ordered array of housemate ids).",

@@ -9,7 +9,7 @@ export default async function MaintenancePage() {
 
   return (
     <FeatureStub
-      featureId="another area"
+      featureId="M3.1"
       checklist={[
         "List the house's tickets from GET /api/maintenance, grouped by status with priority badges.",
         "Build the report form: title, description, category, priority, optional photo (Supabase Storage).",

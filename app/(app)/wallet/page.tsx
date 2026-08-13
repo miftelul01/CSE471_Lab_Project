@@ -9,7 +9,7 @@ export default async function WalletPage() {
 
   return (
     <FeatureStub
-      featureId="another area"
+      featureId="M2.1"
       checklist={[
         "Render the balance summary from the house_balances view — one query gives you owed / paid / outstanding per housemate.",
         "List recent expenses from GET /api/expenses with each person's share and status.",

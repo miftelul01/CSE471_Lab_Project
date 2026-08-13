@@ -9,7 +9,7 @@ export default async function MapPage() {
 
   return (
     <FeatureStub
-      featureId="another area"
+      featureId="M3.3"
       checklist={[
         "Put your key in NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, then restrict it by HTTP referrer in the Google Cloud console — a NEXT_PUBLIC_ key is visible to anyone who opens devtools.",
         "Read listings (with latitude/longitude) from GET /api/listings and drop a marker per listing.",
