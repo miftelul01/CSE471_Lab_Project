@@ -126,7 +126,7 @@ export const FEATURES: Feature[] = [
     href: "/guests",
     api: ["app/api/guests/route.ts"],
     tables: ["guest_logs"],
-    status: "todo",
+    status: "done",
   },
 
   // ── Module 2 ──────────────────────────────────────────────────────────────

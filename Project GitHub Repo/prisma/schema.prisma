@@ -64,6 +64,11 @@ enum JoinRequestStatus {
   WITHDRAWN
 }
 
+enum PostStatus {
+  PUBLISHED
+  REMOVED
+}
+
 enum GuestStatus {
   CHECKED_IN
   CHECKED_OUT
@@ -208,6 +213,10 @@ model User {
   housesOwned        House[]                  @relation("HouseLandlord")
   memberships        HouseMember[]
   listings           Listing[]
+  listingsRemoved    Listing[]                  @relation("ListingRemovedBy")
+  roommatePosts      RoommatePost[]             @relation("RoommatePostPostedBy")
+  roommatePostsRemoved RoommatePost[]           @relation("RoommatePostRemovedBy")
+  roommateApplications RoommateApplication[]
   preference         Preference?
   matches            Match[]
   favorites          Favorite[]
@@ -307,6 +316,7 @@ model House {
   payments       Payment[]
   chores         Chore[]
   disputes       Dispute[]
+  roommatePosts  RoommatePost[]
   calendarEvents CalendarEvent[]
 
   @@index([landlordId])
@@ -361,12 +371,16 @@ model Listing {
   cleanliness   CleanlinessLevel?
   allowsSmoking Boolean?          @map("allows_smoking")
   allowsPets    Boolean?          @map("allows_pets")
+  status        PostStatus        @default(PUBLISHED)
+  removedReason String?           @map("removed_reason")
+  removedAt     DateTime?         @map("removed_at")
+  removedById   String?           @map("removed_by")
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
-  landlord  User   @relation(fields: [landlordId], references: [id], onDelete: Cascade)
-  house     House? @relation(fields: [houseId], references: [id], onDelete: SetNull)
-  removedBy User?  @relation("ListingModerator", fields: [removedById], references: [id], onDelete: SetNull)
+  landlord User   @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+  house    House? @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  removedBy User? @relation("ListingRemovedBy", fields: [removedById], references: [id], onDelete: SetNull)
 
   matches      Match[]
   favorites    Favorite[]
@@ -382,6 +396,54 @@ model Listing {
 // ─────────────────────────────────────────────────────────────────────────────
 // M1.2 Smart Roommate & House Matching — Mahia Tanzin
 // ─────────────────────────────────────────────────────────────────────────────
+
+model RoommatePost {
+  id              String               @id @default(uuid())
+  houseId         String               @map("house_id")
+  postedById      String               @map("posted_by")
+  title           String
+  description     String               @default("")
+  monthlyShare    Decimal              @db.Decimal(10, 2) @map("monthly_share")
+  seatsAvailable  Int                  @default(1) @map("seats_available")
+  availableFrom   DateTime?            @map("available_from")
+  sleepSchedule   SleepSchedule?       @map("sleep_schedule")
+  cleanliness     CleanlinessLevel?
+  petsOk          Boolean?             @map("pets_ok")
+  isActive        Boolean              @default(true) @map("is_active")
+  status          PostStatus           @default(PUBLISHED)
+  removedReason   String?              @map("removed_reason")
+  removedAt       DateTime?            @map("removed_at")
+  removedById     String?              @map("removed_by")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  house         House                  @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  postedBy      User                   @relation("RoommatePostPostedBy", fields: [postedById], references: [id], onDelete: Cascade)
+  removedBy     User?                  @relation("RoommatePostRemovedBy", fields: [removedById], references: [id], onDelete: SetNull)
+  applications  RoommateApplication[]
+
+  @@index([houseId])
+  @@index([postedById])
+  @@index([status])
+  @@map("roommate_posts")
+}
+
+model RoommateApplication {
+  id        String           @id @default(uuid())
+  postId    String           @map("post_id")
+  userId    String           @map("user_id")
+  message   String?
+  status    JoinRequestStatus @default(PENDING)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  post RoommatePost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([userId])
+  @@map("roommate_applications")
+}
 
 model Preference {
   userId        String           @id @map("user_id")
