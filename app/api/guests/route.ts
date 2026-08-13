@@ -1,4 +1,4 @@
-import { badRequest, notImplemented, ok, withUser, readJson, missingFields, fromPrismaError } from "@/lib/api";
+import { badRequest, notFound, ok, withUser, readJson, missingFields, fromPrismaError } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
 import { assertHouseMember } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
@@ -38,6 +38,14 @@ export const POST = withUser(async (user, req: Request) => {
   const missing = missingFields(body, ["guestName"]);
   if (missing.length > 0) return badRequest(`Missing fields: ${missing.join(", ")}`);
 
+  let expectedCheckOut: Date | null = null;
+  if (body.expectedCheckOut) {
+    expectedCheckOut = new Date(body.expectedCheckOut);
+    if (Number.isNaN(expectedCheckOut.getTime())) {
+      return badRequest("expectedCheckOut is not a valid date.");
+    }
+  }
+
   const houseId = await getActiveHouseId(user.id);
   if (!houseId) return badRequest("Join a house before logging guests.");
 
@@ -51,7 +59,7 @@ export const POST = withUser(async (user, req: Request) => {
         guestName: body.guestName,
         guestPhone: body.guestPhone ?? null,
         purpose: body.purpose ?? null,
-        expectedCheckOut: body.expectedCheckOut ? new Date(body.expectedCheckOut) : null,
+        expectedCheckOut,
         status: "CHECKED_IN",
         notifiedAdminAt: new Date(),
       },
@@ -88,7 +96,7 @@ export const PATCH = withUser(async (user, req: Request) => {
     where: { id: guestId },
     select: { houseId: true, status: true },
   });
-  if (!existing) return badRequest("No such guest log entry.", 404);
+  if (!existing) return notFound("No such guest log entry.");
   if (existing.houseId !== houseId) {
     return badRequest("That guest log doesn't belong to your house.");
   }

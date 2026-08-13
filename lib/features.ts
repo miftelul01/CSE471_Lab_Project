@@ -152,7 +152,7 @@ export const FEATURES: Feature[] = [
     href: "/menu",
     api: ["app/api/menu-proposals/route.ts", "app/api/menu-proposals/[id]/vote/route.ts"],
     tables: ["menu_proposals", "menu_proposal_items", "menu_votes"],
-    status: "todo",
+    status: "done",
   },
   {
     id: "M2.3",

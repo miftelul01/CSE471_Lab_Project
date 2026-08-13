@@ -9,7 +9,7 @@ export default async function PaymentsPage() {
 
   return (
     <FeatureStub
-      featureId="another area"
+      featureId="M3.2"
       checklist={[
         "List your pending expense_shares from another area with a Pay button next to each.",
         "POST /api/payments creates an INITIATED payment row and returns the gateway's checkout URL (Stripe Checkout session, or bKash create-payment).",

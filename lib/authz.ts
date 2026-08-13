@@ -186,6 +186,16 @@ export async function assertCanSetJoinRequestStatus(
   return request;
 }
 
+/* ── Menu voting (M2.2) ─────────────────────────────────────────────────── */
+
+/** Policy: the house admin (flat admin or landlord) closes the week's vote. */
+export async function assertCanCloseMenuVoting(user: SessionUser, houseId: string) {
+  if (isPlatformAdmin(user)) return;
+  if (!(await isHouseAdmin(user.id, houseId))) {
+    throw new AuthzError("Only your house admin can close voting for the week.");
+  }
+}
+
 /* ── Mess Court (M3.5) ──────────────────────────────────────────────────── */
 
 /** Policy "disputes visible to house and landlord". */

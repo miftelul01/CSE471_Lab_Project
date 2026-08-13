@@ -1,23 +1,61 @@
-import { FeatureStub } from "@/components/FeatureStub";
-import { requireUser } from "@/lib/auth";
+import { MenuBoard } from "./MenuBoard";
+import { EmptyState, LinkButton, PageHeader } from "@/components/ui";
+import { getActiveHouseId, requireUser } from "@/lib/auth";
+import { isHouseAdmin } from "@/lib/authz";
+import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "Weekly menu — Smart Mess" };
 
-/** another area Weekly Menu Proposal & Voting System. */
+/** M2.2 Weekly Menu Proposal & Voting System — Mahia Tanzin. */
 export default async function MenuPage() {
-  await requireUser();
+  const user = await requireUser();
+  const houseId = await getActiveHouseId(user.id);
+
+  if (!houseId) {
+    return (
+      <div>
+        <PageHeader
+          title="Weekly menu"
+          subtitle="Propose meal plans and vote as a house. The highest-voted plan becomes the official menu."
+        />
+        <EmptyState
+          title="Join a house to use menu voting"
+          hint="Go to the Houses page to create or join a house first."
+        />
+      </div>
+    );
+  }
+
+  const [proposals, canClose] = await Promise.all([
+    prisma.menuProposal.findMany({
+      where: { houseId },
+      include: {
+        items: true,
+        votes: { select: { userId: true, vote: true } },
+        proposedBy: { select: { id: true, name: true } },
+      },
+      orderBy: [{ weekStartDate: "desc" }, { createdAt: "asc" }],
+    }),
+    isHouseAdmin(user.id, houseId),
+  ]);
+
+  const approvedMenu = proposals.find((p) => p.status === "APPROVED") ?? null;
+  const openProposals = proposals.filter((p) => p.status === "OPEN");
 
   return (
-    <FeatureStub
-      featureId="another area"
-      checklist={[
-        "Show next week's open proposals from GET /api/menu-proposals with their current vote tally and which way you voted.",
-        "Build the propose form: a 7x3 grid (day x breakfast/lunch/dinner) that writes menu_proposal_items rows.",
-        "Wire the vote buttons to POST /api/menu-proposals/[id]/vote. Upsert on (proposal_id, user_id) so changing your mind replaces your vote instead of erroring.",
-        "Add the 'close voting' action: highest net score wins and becomes APPROVED, the rest become REJECTED. A partial unique index enforces one approved menu per house per week, so promoting a second one will fail loudly — that is intended.",
-        "Show the approved menu as the official week's menu.",
-        "another area links meals.menu_proposal_id back to the winning proposal — check with Araf before changing that column.",
-      ]}
-    />
+    <div className="space-y-8">
+      <PageHeader
+        title="Weekly menu"
+        subtitle="Propose meal plans and vote as a house. The highest-voted plan becomes the official menu."
+        action={<LinkButton href="/menu/new">Propose a menu</LinkButton>}
+      />
+
+      <MenuBoard
+        approvedMenu={approvedMenu}
+        openProposals={openProposals}
+        currentUserId={user.id}
+        canCloseVoting={canClose}
+      />
+    </div>
   );
 }

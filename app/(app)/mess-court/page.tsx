@@ -10,7 +10,7 @@ export default async function MessCourtPage() {
 
   return (
     <FeatureStub
-      featureId="another area"
+      featureId="M3.5"
       checklist={[
         "List the house's disputes from GET /api/disputes, grouped by state.",
         "Raise-a-dispute form: title, description, category, optional against_user_id. New disputes start in RAISED.",
