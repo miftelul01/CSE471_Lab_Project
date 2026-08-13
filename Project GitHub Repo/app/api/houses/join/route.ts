@@ -3,10 +3,16 @@ import { admitToHouse } from "@/lib/houses";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Join a house by id.
+ * Request to join a house by id.
  *
- * Auto-approved (status ACTIVE) to keep the demo flow short. For landlord
- * approval, create with status PENDING and let the house admin flip it.
+ * Anyone signed in can discover a house id (it's returned alongside every
+ * listing), so knowing the id is not proof of a real connection to that
+ * household. This creates the membership as PENDING rather than ACTIVE —
+ * every house-scoped query (expenses, meals, disputes, guests, ...) filters
+ * on status ACTIVE, so a pending row grants no access to anything until a
+ * house admin promotes it. There's no admin-facing approval UI yet; for now
+ * that promotion happens the same way granting ADMIN does — directly in
+ * Prisma Studio or psql.
  */
 
 export const dynamic = "force-dynamic";
@@ -21,10 +27,8 @@ export const POST = withUser(async (user, req: Request) => {
   });
   if (!house) return badRequest("No house exists with that id.");
 
-  // admitToHouse applies the flat-admin rule: the first resident in a house
-  // becomes the one who runs it.
   const membership = await prisma.$transaction((tx) =>
-    admitToHouse(tx, house.id, user.id, user.profile.role)
+    admitToHouse(tx, house.id, user.id, user.profile.role, "PENDING")
   );
 
   return ok(membership, 201);

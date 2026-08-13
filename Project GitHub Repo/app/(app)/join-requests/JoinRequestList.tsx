@@ -4,9 +4,16 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Badge, Card, ErrorNote, buttonClass, secondaryButtonClass } from "@/components/ui";
-import type { JoinRequest, JoinRequestStatus, Listing } from "@prisma/client";
+import type { JoinRequestStatus } from "@prisma/client";
 
-type RequestWithListing = JoinRequest & { listing: Listing | null };
+// rent is a plain number here, not Prisma Decimal — Decimal instances cannot
+// cross the Server -> Client Component boundary (see app/(app)/join-requests/page.tsx).
+export type JoinRequestRow = {
+  id: string;
+  status: JoinRequestStatus;
+  message: string | null;
+  listing: { title: string; area: string; rent: number } | null;
+};
 
 const STATUS_TONE: Record<JoinRequestStatus, "amber" | "green" | "red" | "slate"> = {
   PENDING: "amber",
@@ -19,7 +26,7 @@ export function JoinRequestList({
   requests,
   viewer,
 }: {
-  requests: RequestWithListing[];
+  requests: JoinRequestRow[];
   viewer: "applicant" | "landlord";
 }) {
   const router = useRouter();

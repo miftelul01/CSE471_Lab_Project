@@ -5,7 +5,20 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, Field, SuccessNote, buttonClass, inputClass } from "@/components/ui";
-import type { CleanlinessLevel, Preference, SleepSchedule } from "@prisma/client";
+import type { CleanlinessLevel, SleepSchedule } from "@prisma/client";
+
+// budgetMin/budgetMax are Prisma Decimal in the database — plain numbers here
+// because Decimal instances cannot cross the Server -> Client Component
+// boundary (see app/(app)/preferences/page.tsx).
+export type PreferenceValues = {
+  budgetMin: number;
+  budgetMax: number;
+  sleepSchedule: SleepSchedule;
+  cleanliness: CleanlinessLevel;
+  smokingOk: boolean;
+  petsOk: boolean;
+  preferredArea: string | null;
+};
 
 const SLEEP_OPTIONS: { value: SleepSchedule; label: string }[] = [
   { value: "EARLY_BIRD", label: "Early bird — asleep before midnight" },
@@ -19,7 +32,7 @@ const CLEAN_OPTIONS: { value: CleanlinessLevel; label: string }[] = [
   { value: "RELAXED", label: "Relaxed — lived-in is fine" },
 ];
 
-export function PreferencesForm({ preference }: { preference: Preference | null }) {
+export function PreferencesForm({ preference }: { preference: PreferenceValues | null }) {
   const router = useRouter();
   const [form, setForm] = useState({
     budgetMin: preference?.budgetMin?.toString() ?? "5000",
