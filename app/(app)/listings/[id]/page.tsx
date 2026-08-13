@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ListingActions } from "./ListingActions";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
+import { listingVisibilityFilter } from "@/lib/authz";
 import { ROOM_TYPE_LABELS } from "@/lib/listings";
 import { prisma } from "@/lib/prisma";
 
@@ -19,8 +20,11 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
 export default async function ListingDetailPage({ params }: { params: { id: string } }) {
   const user = await requireUser();
 
-  const listing = await prisma.listing.findUnique({
-    where: { id: params.id },
+  // Same visibility rule the search list uses — a delisted room or one an
+  // admin removed for breaking the rules stays out of everyone's hands
+  // except the owner and platform admins, same as it's kept out of search.
+  const listing = await prisma.listing.findFirst({
+    where: { id: params.id, ...listingVisibilityFilter(user) },
     include: {
       house: { select: { id: true, name: true } },
       landlord: { select: { name: true, email: true, phone: true } },
