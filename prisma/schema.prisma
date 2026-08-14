@@ -491,6 +491,11 @@ model Expense {
   /// a real person. Such rows still split into shares; they just take no part
   /// in "who owes whom".
   paidById    String?         @map("paid_by")
+  /// Set when M2.3 generated this expense from a meal, so attendance changes
+  /// can find their own row. Previously this link was a "MEAL:<id>" string
+  /// stuffed into `description` — a free-text column any resident can type
+  /// into, with no index and no referential integrity.
+  mealId      String?         @unique @map("meal_id")
   title       String
   description String?
   amount      Decimal         @db.Decimal(12, 2)
@@ -503,6 +508,9 @@ model Expense {
   house     House @relation(fields: [houseId], references: [id], onDelete: Cascade)
   createdBy User  @relation("ExpenseCreator", fields: [createdById], references: [id], onDelete: Cascade)
   paidBy    User? @relation("ExpensePayer", fields: [paidById], references: [id], onDelete: SetNull)
+  // SetNull rather than Cascade: if the meal slot is removed, the money that
+  // was already charged for it must not vanish with it.
+  meal      Meal? @relation(fields: [mealId], references: [id], onDelete: SetNull)
 
   shares ExpenseShare[]
 
@@ -630,6 +638,7 @@ model Meal {
   menuProposal MenuProposal? @relation(fields: [menuProposalId], references: [id], onDelete: SetNull)
 
   attendance MealAttendance[]
+  expense    Expense?
 
   @@unique([houseId, mealDate, mealType])
   @@index([houseId, mealDate(sort: Desc)])

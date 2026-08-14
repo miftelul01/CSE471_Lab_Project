@@ -7,7 +7,7 @@ import {
   loadMealAttendancePageData,
   saveMealSlot,
 } from "@/Araf/M2.3-MealAttendance/mealAttendance";
-import type { MealType } from "@prisma/client";
+import type { AttendanceStatus, MealType } from "@prisma/client";
 
 /** M2.3 Meal Attendance & Auto-Quantity Adjustment — Md. Mahidul Alam Araf. */
 
@@ -25,7 +25,7 @@ export const GET = withUser(async (user, req: Request) => {
 type MealSlotBody = {
   mealDate: string;
   mealType: MealType;
-  costPerHead?: number | null;
+  costPerHead?: number | string | null;
   locksAt?: string | null;
   menuProposalId?: string | null;
 };
@@ -48,7 +48,8 @@ export const POST = withUser(async (user, req: Request) => {
 
 type MealAttendanceBody = {
   mealId: string;
-  status?: "ATTENDING" | "SKIPPING";
+  /** Left loose on purpose: changeMealAttendance rejects anything unknown. */
+  status?: AttendanceStatus;
 };
 
 export const PATCH = withUser(async (user, req: Request) => {
