@@ -35,6 +35,47 @@ export const notImplemented = (feature: string) =>
     { status: 501 }
   );
 
+/**
+ * An error a route handler (or the library behind it) wants turned into a
+ * specific status code.
+ *
+ * AuthzError already does this for 403/404. This is the same idea for the
+ * cases that aren't about permission — "that meal is already locked" is a 400,
+ * and throwing a bare Error for it turns a user mistake into a 500.
+ */
+export class HttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: 400 | 403 | 404 | 409 = 400
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
+/**
+ * Strips the parts of a Postgres error that describe stored data.
+ *
+ * Our triggers raise messages meant to be read (the Mess Court state machine
+ * names the illegal transition), so the message itself is worth surfacing. The
+ * DETAIL line is not: on a CHECK violation Postgres appends the entire failing
+ * row, which put house ids, user ids and amounts into an HTTP response body.
+ */
+function scrubDatabaseMessage(message: string): string {
+  const line =
+    message
+      .split("\n")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .pop() ?? "Database rejected that change.";
+
+  return line
+    .replace(/Failing row contains \([^)]*\)\.?/gi, "")
+    .replace(/DETAIL:[\s\S]*$/i, "")
+    .trim()
+    .slice(0, 300);
+}
+
 /** Turns a Prisma error into the right HTTP response. */
 export function fromPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -52,7 +93,13 @@ export function fromPrismaError(error: unknown) {
   // Raised by our own CHECK constraints and triggers — most importantly the
   // Mess Court state machine, whose message names the illegal transition.
   if (error instanceof Prisma.PrismaClientUnknownRequestError) {
-    return badRequest(error.message.split("\n").pop() ?? "Database rejected that change.");
+    return badRequest(scrubDatabaseMessage(error.message));
+  }
+  // A bad enum value or an Invalid Date reaches Prisma as a validation error.
+  // That is the caller's mistake, not ours, and the full message echoes the
+  // whole generated query back at them.
+  if (error instanceof Prisma.PrismaClientValidationError) {
+    return badRequest("One of the values sent isn't valid for this request.");
   }
   return null;
 }
@@ -74,7 +121,7 @@ export function withUser<Args extends unknown[]>(
     } catch (err) {
       // Thrown by lib/authz.ts — the application-level replacement for the
       // Row Level Security policies the database used to enforce.
-      if (err instanceof AuthzError) {
+      if (err instanceof AuthzError || err instanceof HttpError) {
         return NextResponse.json({ error: err.message }, { status: err.status });
       }
       const prismaResponse = fromPrismaError(err);

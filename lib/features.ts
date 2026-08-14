@@ -164,7 +164,7 @@ export const FEATURES: Feature[] = [
     href: "/meals",
     api: ["app/api/meals/route.ts"],
     tables: ["meals", "meal_attendance"],
-    status: "todo",
+    status: "done",
   },
 
   // ── Module 3 ──────────────────────────────────────────────────────────────
