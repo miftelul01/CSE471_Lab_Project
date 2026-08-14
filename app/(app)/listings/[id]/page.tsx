@@ -51,7 +51,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 
   const hasLifestyle =
     listing.sleepSchedule !== null ||
-    listing.cleanliness !== null ||
+    listing.cleanlinessLevel !== null ||
     listing.allowsSmoking !== null ||
     listing.allowsPets !== null;
 
@@ -118,12 +118,10 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                     </dd>
                   </div>
                 ) : null}
-                {listing.cleanliness ? (
+                {listing.cleanlinessLevel !== null ? (
                   <div>
                     <dt className="text-slate-500">Cleanliness</dt>
-                    <dd className="text-slate-900">
-                      {listing.cleanliness.toLowerCase().replace("_", " ")}
-                    </dd>
+                    <dd className="text-slate-900">{listing.cleanlinessLevel}/5</dd>
                   </div>
                 ) : null}
                 {listing.allowsSmoking !== null ? (
@@ -168,6 +166,14 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
               <p className="text-sm text-slate-600">{listing.landlord.phone}</p>
             ) : null}
             <p className="text-sm text-slate-600">{listing.landlord.email}</p>
+            {!isOwner ? (
+              <Link
+                href={`/messages/${listing.landlordId}`}
+                className="mt-2 inline-block text-sm text-brand-700 underline"
+              >
+                Message the landlord
+              </Link>
+            ) : null}
             {listing.house ? (
               <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
                 Part of <span className="text-slate-700">{listing.house.name}</span>

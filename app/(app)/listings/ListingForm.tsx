@@ -11,25 +11,13 @@ import {
   inputClass,
   secondaryButtonClass,
 } from "@/components/ui";
-import {
-  CLEANLINESS_LEVELS,
-  ROOM_TYPES,
-  ROOM_TYPE_LABELS,
-  SLEEP_SCHEDULES,
-  parseAmenities,
-} from "@/lib/listings";
-import type { CleanlinessLevel, House, Listing, RoomType, SleepSchedule } from "@prisma/client";
+import { ROOM_TYPES, ROOM_TYPE_LABELS, SLEEP_SCHEDULES, parseAmenities } from "@/lib/listings";
+import type { House, Listing, RoomType, SleepSchedule } from "@prisma/client";
 
 const SLEEP_LABELS: Record<SleepSchedule, string> = {
   EARLY_BIRD: "Early bird",
   NIGHT_OWL: "Night owl",
   FLEXIBLE: "Flexible",
-};
-
-const CLEAN_LABELS: Record<CleanlinessLevel, string> = {
-  VERY_TIDY: "Very tidy",
-  MODERATE: "Moderate",
-  RELAXED: "Relaxed",
 };
 
 /**
@@ -59,7 +47,7 @@ export function ListingForm({
     longitude: listing?.longitude?.toString() ?? "",
     houseId: listing?.houseId ?? "",
     sleepSchedule: (listing?.sleepSchedule ?? "") as SleepSchedule | "",
-    cleanliness: (listing?.cleanliness ?? "") as CleanlinessLevel | "",
+    cleanlinessLevel: listing?.cleanlinessLevel?.toString() ?? "",
     allowsSmoking: listing?.allowsSmoking ?? false,
     allowsPets: listing?.allowsPets ?? false,
   });
@@ -84,7 +72,7 @@ export function ListingForm({
       latitude: form.latitude ? Number(form.latitude) : null,
       longitude: form.longitude ? Number(form.longitude) : null,
       sleepSchedule: form.sleepSchedule || null,
-      cleanliness: form.cleanliness || null,
+      cleanlinessLevel: form.cleanlinessLevel ? Number(form.cleanlinessLevel) : null,
       allowsSmoking: form.allowsSmoking,
       allowsPets: form.allowsPets,
       // Only sent on create: moving a listing between houses after people have
@@ -274,18 +262,16 @@ export function ListingForm({
             </select>
           </Field>
 
-          <Field label="Cleanliness">
+          <Field label="Cleanliness" hint="1 = relaxed, 5 = very tidy. Leave blank if unsure.">
             <select
               className={inputClass}
-              value={form.cleanliness}
-              onChange={(e) =>
-                setForm({ ...form, cleanliness: e.target.value as CleanlinessLevel | "" })
-              }
+              value={form.cleanlinessLevel}
+              onChange={(e) => setForm({ ...form, cleanlinessLevel: e.target.value })}
             >
               <option value="">Not specified</option>
-              {CLEANLINESS_LEVELS.map((value) => (
+              {[1, 2, 3, 4, 5].map((value) => (
                 <option key={value} value={value}>
-                  {CLEAN_LABELS[value]}
+                  {value}
                 </option>
               ))}
             </select>

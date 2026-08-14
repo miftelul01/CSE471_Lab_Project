@@ -22,10 +22,19 @@ export default async function PreferencesPage() {
             budgetMin: Number(preference.budgetMin),
             budgetMax: Number(preference.budgetMax),
             sleepSchedule: preference.sleepSchedule,
-            cleanliness: preference.cleanliness,
+            cleanlinessLevel: preference.cleanlinessLevel,
+            noiseTolerance: preference.noiseTolerance,
+            guestPolicy: preference.guestPolicy,
             smokingOk: preference.smokingOk,
             petsOk: preference.petsOk,
             preferredArea: preference.preferredArea,
+            budgetWeight: preference.budgetWeight,
+            sleepWeight: preference.sleepWeight,
+            cleanlinessWeight: preference.cleanlinessWeight,
+            noiseWeight: preference.noiseWeight,
+            guestWeight: preference.guestWeight,
+            smokingWeight: preference.smokingWeight,
+            petsWeight: preference.petsWeight,
           }
         }
       />

@@ -43,12 +43,6 @@ enum SleepSchedule {
   FLEXIBLE
 }
 
-enum CleanlinessLevel {
-  VERY_TIDY
-  MODERATE
-  RELAXED
-}
-
 enum RoomType {
   SINGLE
   SHARED
@@ -57,11 +51,51 @@ enum RoomType {
   ENTIRE_FLAT
 }
 
+/// PENDING -> ACCEPTED / REJECTED / CANCELLED (sender-initiated) / EXPIRED
+/// (system, 14 days unanswered). Shared by JoinRequest and RoommateApplication.
 enum JoinRequestStatus {
   PENDING
   ACCEPTED
   REJECTED
-  WITHDRAWN
+  CANCELLED
+  EXPIRED
+}
+
+/// Importance a resident assigns to one factor of their matching profile.
+/// MUST_HAVE is a hard dealbreaker, not just a heavier weight — see
+/// computeCompatibilityScore in lib/matching.ts.
+enum PreferenceWeight {
+  MUST_HAVE
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum GuestPolicy {
+  RARELY
+  OCCASIONALLY
+  FREQUENTLY
+}
+
+/// Admin-reviewed self-attestation (phone / university ID), not a live
+/// SMS/ID-provider integration — see VerificationRequest.
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ReportTargetType {
+  USER
+  LISTING
+  ROOMMATE_POST
+}
+
+enum ReportStatus {
+  OPEN
+  DISMISSED
+  ACTIONED
 }
 
 /// Moderation state, applied by a system administrator.
@@ -199,6 +233,11 @@ model User {
   emergencyContactName  String?  @map("emergency_contact_name")
   emergencyContactPhone String?  @map("emergency_contact_phone")
 
+  /// Cumulative penalty from upheld post-move-in profile complaints (Mess
+  /// Court). Dampens this user's future compatibility scores. See
+  /// lib/matching.ts and app/api/admin/disputes/uphold/route.ts.
+  matchRatingPenalty Int @default(0) @map("match_rating_penalty")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -235,6 +274,16 @@ model User {
   roommatePosts      RoommatePost[]        @relation("RoommatePoster")
   roommateApplications RoommateApplication[]
   roommatePostsRemoved RoommatePost[]      @relation("RoommatePostModerator")
+
+  matchRequestsSent     RoommateMatchRequest[] @relation("MatchRequestSender")
+  matchRequestsReceived RoommateMatchRequest[] @relation("MatchRequestReceiver")
+  messagesSent          Message[]              @relation("MessageSender")
+  messagesReceived      Message[]              @relation("MessageRecipient")
+  blocksMade            UserBlock[]            @relation("Blocker")
+  blocksReceived        UserBlock[]            @relation("Blocked")
+  reportsFiled          Report[]               @relation("Reporter")
+  verificationRequests  VerificationRequest[]  @relation("VerificationSubject")
+  verificationsReviewed VerificationRequest[]  @relation("VerificationReviewer")
 
   @@index([createdAt(sort: Desc)])
   @@map("users")
@@ -360,7 +409,9 @@ model Listing {
   removedAt     DateTime?         @map("removed_at")
   removedById   String?           @map("removed_by")
   sleepSchedule SleepSchedule?    @map("sleep_schedule")
-  cleanliness   CleanlinessLevel?
+  /// 1 (relaxed) - 5 (very tidy) — same scale as Preference.cleanlinessLevel
+  /// so the matching engine compares like-for-like.
+  cleanlinessLevel Int?           @map("cleanliness_level")
   allowsSmoking Boolean?          @map("allows_smoking")
   allowsPets    Boolean?          @map("allows_pets")
   createdAt     DateTime          @default(now()) @map("created_at")
@@ -373,6 +424,7 @@ model Listing {
   matches      Match[]
   favorites    Favorite[]
   joinRequests JoinRequest[]
+  messages     Message[]
 
   @@index([landlordId])
   @@index([houseId])
@@ -390,10 +442,26 @@ model Preference {
   budgetMin     Decimal          @map("budget_min") @db.Decimal(10, 2)
   budgetMax     Decimal          @map("budget_max") @db.Decimal(10, 2)
   sleepSchedule SleepSchedule    @map("sleep_schedule")
-  cleanliness   CleanlinessLevel
+  /// 1 (relaxed) - 5 (very tidy).
+  cleanlinessLevel Int           @map("cleanliness_level")
+  /// 1 (needs quiet) - 5 (tolerates a lot of noise).
+  noiseTolerance   Int           @map("noise_tolerance")
+  guestPolicy   GuestPolicy      @default(OCCASIONALLY) @map("guest_policy")
   smokingOk     Boolean          @default(false) @map("smoking_ok")
   petsOk        Boolean          @default(false) @map("pets_ok")
   preferredArea String?          @map("preferred_area")
+
+  // Custom Preference Weighting — importance the resident assigns to each
+  // factor, so scoring reflects personal dealbreakers rather than a flat
+  // average. See lib/matching.ts computeCompatibilityScore.
+  budgetWeight      PreferenceWeight @default(MEDIUM) @map("budget_weight")
+  sleepWeight       PreferenceWeight @default(MEDIUM) @map("sleep_weight")
+  cleanlinessWeight PreferenceWeight @default(MEDIUM) @map("cleanliness_weight")
+  noiseWeight       PreferenceWeight @default(MEDIUM) @map("noise_weight")
+  guestWeight       PreferenceWeight @default(MEDIUM) @map("guest_weight")
+  smokingWeight     PreferenceWeight @default(MEDIUM) @map("smoking_weight")
+  petsWeight        PreferenceWeight @default(MEDIUM) @map("pets_weight")
+
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
 
@@ -445,6 +513,99 @@ model JoinRequest {
 
   @@index([listingId])
   @@map("join_requests")
+}
+
+/// User<->User equivalent of JoinRequest — matching a person directly with
+/// another person, not with a listing. Accepting just unlocks contact info
+/// and messaging between the two; it does not create a house on its own —
+/// the pair still applies to a listing through the normal JoinRequest flow.
+model RoommateMatchRequest {
+  id         String            @id @default(uuid())
+  senderId   String            @map("sender_id")
+  receiverId String            @map("receiver_id")
+  status     JoinRequestStatus @default(PENDING)
+  message    String?
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  sender   User @relation("MatchRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("MatchRequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  // One open (PENDING) request per direction — enforced by a partial unique
+  // index in migration.sql, same pattern as join_requests_one_open_per_listing.
+  // A plain @@unique here would permanently block a resend after the pair's
+  // first request resolves to CANCELLED/REJECTED/EXPIRED.
+  @@index([receiverId])
+  @@map("roommate_match_requests")
+}
+
+/// Lightweight pre-request chat between two users, optionally scoped to the
+/// listing/roommate-post the conversation is about.
+model Message {
+  id          String    @id @default(uuid())
+  senderId    String    @map("sender_id")
+  recipientId String    @map("recipient_id")
+  listingId   String?   @map("listing_id")
+  body        String
+  createdAt   DateTime  @default(now()) @map("created_at")
+  readAt      DateTime? @map("read_at")
+
+  sender    User    @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User    @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  listing   Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  @@index([senderId, recipientId, createdAt])
+  @@index([recipientId, readAt])
+  @@map("messages")
+}
+
+/// A blocks B: B disappears from A's matching feeds and vice versa.
+model UserBlock {
+  id        String   @id @default(uuid())
+  blockerId String   @map("blocker_id")
+  blockedId String   @map("blocked_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@map("user_blocks")
+}
+
+model Report {
+  id         String            @id @default(uuid())
+  reporterId String            @map("reporter_id")
+  targetType ReportTargetType  @map("target_type")
+  targetId   String            @map("target_id")
+  reason     String
+  status     ReportStatus      @default(OPEN)
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("reports")
+}
+
+/// Admin-reviewed verification (phone / university ID) backing the "Verified"
+/// badge — a self-attestation with a human review trail, not a live
+/// SMS/ID-provider integration. Latest VERIFIED row for a user = badge shown.
+model VerificationRequest {
+  id           String              @id @default(uuid())
+  userId       String              @map("user_id")
+  phone        String?
+  note         String?
+  status       VerificationStatus  @default(PENDING)
+  reviewedById String?             @map("reviewed_by")
+  reviewedAt   DateTime?           @map("reviewed_at")
+  createdAt    DateTime            @default(now()) @map("created_at")
+
+  user       User  @relation("VerificationSubject", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("VerificationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@map("verification_requests")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -900,7 +1061,7 @@ model RoommatePost {
   seatsAvailable Int               @default(1) @map("seats_available")
   availableFrom  DateTime?         @map("available_from") @db.Date
   sleepSchedule  SleepSchedule?    @map("sleep_schedule")
-  cleanliness    CleanlinessLevel?
+  cleanlinessLevel Int?            @map("cleanliness_level")
   smokingOk      Boolean?          @map("smoking_ok")
   petsOk         Boolean?          @map("pets_ok")
   isActive       Boolean           @default(true) @map("is_active")

@@ -1,7 +1,7 @@
 import { badRequest, forbidden, missingFields, ok, readJson, withUser } from "@/lib/api";
 import { isHouseAdmin } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
-import type { CleanlinessLevel, Prisma, SleepSchedule } from "@prisma/client";
+import type { Prisma, SleepSchedule } from "@prisma/client";
 
 /**
  * Roommate posts — a flat admin advertising a spare seat in the house they
@@ -49,7 +49,7 @@ type RoommatePostBody = {
   seatsAvailable?: number;
   availableFrom?: string | null;
   sleepSchedule?: SleepSchedule | null;
-  cleanliness?: CleanlinessLevel | null;
+  cleanlinessLevel?: number | null;
   smokingOk?: boolean | null;
   petsOk?: boolean | null;
 };
@@ -82,7 +82,7 @@ export const POST = withUser(async (user, req: Request) => {
       seatsAvailable: Number(body.seatsAvailable ?? 1),
       availableFrom: body.availableFrom ? new Date(body.availableFrom) : null,
       sleepSchedule: body.sleepSchedule ?? null,
-      cleanliness: body.cleanliness ?? null,
+      cleanlinessLevel: body.cleanlinessLevel ?? null,
       smokingOk: body.smokingOk ?? null,
       petsOk: body.petsOk ?? null,
     },

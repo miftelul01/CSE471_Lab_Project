@@ -1,4 +1,4 @@
-import type { CleanlinessLevel, RoomType, SleepSchedule } from "@prisma/client";
+import type { RoomType, SleepSchedule } from "@prisma/client";
 
 /**
  * Shared shapes and validation for M1.1 listings, used by both the create and
@@ -8,7 +8,9 @@ import type { CleanlinessLevel, RoomType, SleepSchedule } from "@prisma/client";
 
 export const ROOM_TYPES: RoomType[] = ["SINGLE", "SHARED", "MASTER", "SEAT", "ENTIRE_FLAT"];
 export const SLEEP_SCHEDULES: SleepSchedule[] = ["EARLY_BIRD", "NIGHT_OWL", "FLEXIBLE"];
-export const CLEANLINESS_LEVELS: CleanlinessLevel[] = ["VERY_TIDY", "MODERATE", "RELAXED"];
+/** 1 (relaxed) - 5 (very tidy) — same scale the matching engine (lib/matching.ts) uses. */
+export const CLEANLINESS_MIN = 1;
+export const CLEANLINESS_MAX = 5;
 
 /** Human labels, so the UI and the API agree on wording. */
 export const ROOM_TYPE_LABELS: Record<RoomType, string> = {
@@ -33,7 +35,7 @@ export type ListingInput = {
   /** Attach to an existing house; omit on create to make one from this listing. */
   houseId?: string | null;
   sleepSchedule?: SleepSchedule | null;
-  cleanliness?: CleanlinessLevel | null;
+  cleanlinessLevel?: number | null;
   allowsSmoking?: boolean | null;
   allowsPets?: boolean | null;
   isActive?: boolean;
@@ -68,8 +70,11 @@ export function validateListing(body: Partial<ListingInput>): string | null {
   if (body.sleepSchedule != null && !SLEEP_SCHEDULES.includes(body.sleepSchedule)) {
     return `Sleep schedule must be one of: ${SLEEP_SCHEDULES.join(", ")}.`;
   }
-  if (body.cleanliness != null && !CLEANLINESS_LEVELS.includes(body.cleanliness)) {
-    return `Cleanliness must be one of: ${CLEANLINESS_LEVELS.join(", ")}.`;
+  if (body.cleanlinessLevel != null) {
+    const level = Number(body.cleanlinessLevel);
+    if (!Number.isInteger(level) || level < CLEANLINESS_MIN || level > CLEANLINESS_MAX) {
+      return `Cleanliness must be a whole number from ${CLEANLINESS_MIN} to ${CLEANLINESS_MAX}.`;
+    }
   }
   if (body.amenities !== undefined) {
     if (!Array.isArray(body.amenities) || body.amenities.some((a) => typeof a !== "string")) {

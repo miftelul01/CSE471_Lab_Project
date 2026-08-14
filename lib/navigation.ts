@@ -36,7 +36,8 @@ export type IconName =
   | "gavel"
   | "map"
   | "calendar"
-  | "shield";
+  | "shield"
+  | "message";
 
 const LANDLORD_NAV: NavGroup[] = [
   { heading: "Overview", items: [{ label: "Dashboard", href: "/dashboard", icon: "dashboard" }] },
@@ -46,6 +47,7 @@ const LANDLORD_NAV: NavGroup[] = [
       { label: "Properties", href: "/properties", icon: "building" },
       { label: "Applications", href: "/join-requests", icon: "users" },
       { label: "My houses", href: "/houses", icon: "guest" },
+      { label: "Messages", href: "/messages", icon: "message" },
     ],
   },
   {
@@ -66,6 +68,7 @@ const FLAT_HEAD_NAV: NavGroup[] = [
       { label: "Members", href: "/houses", icon: "users" },
       { label: "Roommate ads", href: "/roommates", icon: "match" },
       { label: "Guest log", href: "/guests", icon: "guest" },
+      { label: "Messages", href: "/messages", icon: "message" },
     ],
   },
   {
@@ -102,6 +105,7 @@ const MEMBER_NAV: NavGroup[] = [
       { label: "Rooms in flats", href: "/roommates", icon: "guest" },
       { label: "Roommate matching", href: "/matches", icon: "match" },
       { label: "Map view", href: "/map", icon: "map" },
+      { label: "Messages", href: "/messages", icon: "message" },
     ],
   },
   {

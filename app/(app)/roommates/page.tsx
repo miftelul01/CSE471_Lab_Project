@@ -94,8 +94,8 @@ export default async function RoommatesPage() {
                   {post.sleepSchedule ? (
                     <Badge>{post.sleepSchedule.toLowerCase().replace("_", " ")}</Badge>
                   ) : null}
-                  {post.cleanliness ? (
-                    <Badge>{post.cleanliness.toLowerCase().replace("_", " ")}</Badge>
+                  {post.cleanlinessLevel !== null ? (
+                    <Badge>cleanliness {post.cleanlinessLevel}/5</Badge>
                   ) : null}
                   {post.petsOk ? <Badge>pets ok</Badge> : null}
                 </div>

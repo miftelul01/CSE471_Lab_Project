@@ -54,6 +54,17 @@ export default async function MatchesPage() {
           </div>
         }
       />
+      <div className="mb-4 flex gap-2 border-b border-slate-200">
+        <span className="border-b-2 border-brand-700 px-3 pb-2 text-sm font-medium text-brand-700">
+          Rooms
+        </span>
+        <Link
+          href="/matches/people"
+          className="px-3 pb-2 text-sm font-medium text-slate-500 hover:text-slate-800"
+        >
+          People
+        </Link>
+      </div>
       <MatchList />
     </div>
   );

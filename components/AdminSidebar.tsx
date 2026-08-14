@@ -21,6 +21,9 @@ const GROUPS: { heading: string; items: { label: string; href: string; icon: Ico
       { label: "Rental listings", href: "/admin/listings", icon: "building" },
       { label: "Roommate posts", href: "/admin/roommate-posts", icon: "match" },
       { label: "Escalated cases", href: "/admin/disputes", icon: "gavel" },
+      { label: "Profile complaints", href: "/admin/profile-complaints", icon: "gavel" },
+      { label: "Verification requests", href: "/admin/verification", icon: "shield" },
+      { label: "Reports", href: "/admin/reports", icon: "gavel" },
     ],
   },
   {
