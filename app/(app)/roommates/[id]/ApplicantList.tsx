@@ -19,7 +19,8 @@ const TONE: Record<JoinRequestStatus, "amber" | "green" | "red" | "slate"> = {
   PENDING: "amber",
   ACCEPTED: "green",
   REJECTED: "red",
-  WITHDRAWN: "slate",
+  CANCELLED: "slate",
+  EXPIRED: "slate",
 };
 
 export function ApplicantList({

@@ -25,6 +25,7 @@ const PATHS: Record<IconName, string> = {
   map: "M9 4L3 6v14l6-2 6 2 6-2V4l-6 2zM9 4v14M15 6v14",
   calendar: "M4 7a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2zM4 10h16M8 3v4M16 3v4",
   shield: "M12 3l8 3v6c0 5-3.4 8.2-8 9-4.6-.8-8-4-8-9V6zM9 12l2 2 4-4",
+  message: "M4 4h16v12H9l-5 4z",
 };
 
 export function Icon({ name, className = "h-[18px] w-[18px]" }: { name: IconName; className?: string }) {

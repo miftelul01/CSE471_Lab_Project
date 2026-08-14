@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, Field, SuccessNote, buttonClass, inputClass } from "@/components/ui";
-import type { CleanlinessLevel, SleepSchedule } from "@prisma/client";
+import type { GuestPolicy, PreferenceWeight, SleepSchedule } from "@prisma/client";
 
 // budgetMin/budgetMax are Prisma Decimal in the database — plain numbers here
 // because Decimal instances cannot cross the Server -> Client Component
@@ -14,10 +14,19 @@ export type PreferenceValues = {
   budgetMin: number;
   budgetMax: number;
   sleepSchedule: SleepSchedule;
-  cleanliness: CleanlinessLevel;
+  cleanlinessLevel: number;
+  noiseTolerance: number;
+  guestPolicy: GuestPolicy;
   smokingOk: boolean;
   petsOk: boolean;
   preferredArea: string | null;
+  budgetWeight: PreferenceWeight;
+  sleepWeight: PreferenceWeight;
+  cleanlinessWeight: PreferenceWeight;
+  noiseWeight: PreferenceWeight;
+  guestWeight: PreferenceWeight;
+  smokingWeight: PreferenceWeight;
+  petsWeight: PreferenceWeight;
 };
 
 const SLEEP_OPTIONS: { value: SleepSchedule; label: string }[] = [
@@ -26,11 +35,54 @@ const SLEEP_OPTIONS: { value: SleepSchedule; label: string }[] = [
   { value: "FLEXIBLE", label: "Flexible — either works" },
 ];
 
-const CLEAN_OPTIONS: { value: CleanlinessLevel; label: string }[] = [
-  { value: "VERY_TIDY", label: "Very tidy — everything in its place" },
-  { value: "MODERATE", label: "Moderate — tidy enough" },
-  { value: "RELAXED", label: "Relaxed — lived-in is fine" },
+const GUEST_OPTIONS: { value: GuestPolicy; label: string }[] = [
+  { value: "RARELY", label: "Rarely — I like a quiet, private house" },
+  { value: "OCCASIONALLY", label: "Occasionally — the odd visitor is fine" },
+  { value: "FREQUENTLY", label: "Frequently — I like a lively, social house" },
 ];
+
+const WEIGHT_OPTIONS: { value: PreferenceWeight; label: string }[] = [
+  { value: "MUST_HAVE", label: "Must-have (dealbreaker)" },
+  { value: "HIGH", label: "High" },
+  { value: "MEDIUM", label: "Medium" },
+  { value: "LOW", label: "Low" },
+];
+
+/** A weighted factor row: the input on the left, "how much this matters" on the right. */
+function WeightedField({
+  label,
+  hint,
+  weight,
+  onWeightChange,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  weight: PreferenceWeight;
+  onWeightChange: (w: PreferenceWeight) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid gap-3 rounded-lg border border-slate-100 p-3 sm:grid-cols-[1fr_180px]">
+      <Field label={label} hint={hint}>
+        {children}
+      </Field>
+      <Field label="Importance">
+        <select
+          className={inputClass}
+          value={weight}
+          onChange={(e) => onWeightChange(e.target.value as PreferenceWeight)}
+        >
+          {WEIGHT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+    </div>
+  );
+}
 
 export function PreferencesForm({ preference }: { preference: PreferenceValues | null }) {
   const router = useRouter();
@@ -38,10 +90,19 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
     budgetMin: preference?.budgetMin?.toString() ?? "5000",
     budgetMax: preference?.budgetMax?.toString() ?? "15000",
     sleepSchedule: preference?.sleepSchedule ?? ("FLEXIBLE" as SleepSchedule),
-    cleanliness: preference?.cleanliness ?? ("MODERATE" as CleanlinessLevel),
+    cleanlinessLevel: preference?.cleanlinessLevel ?? 3,
+    noiseTolerance: preference?.noiseTolerance ?? 3,
+    guestPolicy: preference?.guestPolicy ?? ("OCCASIONALLY" as GuestPolicy),
     smokingOk: preference?.smokingOk ?? false,
     petsOk: preference?.petsOk ?? false,
     preferredArea: preference?.preferredArea ?? "",
+    budgetWeight: preference?.budgetWeight ?? ("MEDIUM" as PreferenceWeight),
+    sleepWeight: preference?.sleepWeight ?? ("MEDIUM" as PreferenceWeight),
+    cleanlinessWeight: preference?.cleanlinessWeight ?? ("MEDIUM" as PreferenceWeight),
+    noiseWeight: preference?.noiseWeight ?? ("MEDIUM" as PreferenceWeight),
+    guestWeight: preference?.guestWeight ?? ("MEDIUM" as PreferenceWeight),
+    smokingWeight: preference?.smokingWeight ?? ("MEDIUM" as PreferenceWeight),
+    petsWeight: preference?.petsWeight ?? ("MEDIUM" as PreferenceWeight),
   });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -60,6 +121,8 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
         ...form,
         budgetMin: Number(form.budgetMin),
         budgetMax: Number(form.budgetMax),
+        cleanlinessLevel: Number(form.cleanlinessLevel),
+        noiseTolerance: Number(form.noiseTolerance),
       }),
     });
     const body = await res.json();
@@ -76,6 +139,12 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
   return (
     <Card>
       <form onSubmit={handleSubmit} className="space-y-4">
+        <p className="text-xs text-slate-500">
+          Set &ldquo;Importance&rdquo; to <strong>Must-have</strong> for anything you consider a
+          dealbreaker — a hard mismatch there caps the whole compatibility score low, instead of
+          just averaging it away.
+        </p>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Minimum budget (BDT/month)">
             <input
@@ -98,8 +167,27 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
             />
           </Field>
         </div>
+        <div className="-mt-2">
+          <Field label="How much budget matters">
+            <select
+              className={inputClass}
+              value={form.budgetWeight}
+              onChange={(e) => setForm({ ...form, budgetWeight: e.target.value as PreferenceWeight })}
+            >
+              {WEIGHT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
 
-        <Field label="Sleep schedule">
+        <WeightedField
+          label="Sleep schedule"
+          weight={form.sleepWeight}
+          onWeightChange={(w) => setForm({ ...form, sleepWeight: w })}
+        >
           <select
             className={inputClass}
             value={form.sleepSchedule}
@@ -111,21 +199,59 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
               </option>
             ))}
           </select>
-        </Field>
+        </WeightedField>
 
-        <Field label="Cleanliness">
+        <WeightedField
+          label={`Cleanliness — ${form.cleanlinessLevel}/5`}
+          hint="1 = relaxed, lived-in is fine. 5 = very tidy, everything in its place."
+          weight={form.cleanlinessWeight}
+          onWeightChange={(w) => setForm({ ...form, cleanlinessWeight: w })}
+        >
+          <input
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            className="w-full"
+            value={form.cleanlinessLevel}
+            onChange={(e) => setForm({ ...form, cleanlinessLevel: Number(e.target.value) })}
+          />
+        </WeightedField>
+
+        <WeightedField
+          label={`Noise tolerance — ${form.noiseTolerance}/5`}
+          hint="1 = I need it quiet. 5 = I don't mind a lot of noise."
+          weight={form.noiseWeight}
+          onWeightChange={(w) => setForm({ ...form, noiseWeight: w })}
+        >
+          <input
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            className="w-full"
+            value={form.noiseTolerance}
+            onChange={(e) => setForm({ ...form, noiseTolerance: Number(e.target.value) })}
+          />
+        </WeightedField>
+
+        <WeightedField
+          label="Guest / visitor policy"
+          weight={form.guestWeight}
+          onWeightChange={(w) => setForm({ ...form, guestWeight: w })}
+        >
           <select
             className={inputClass}
-            value={form.cleanliness}
-            onChange={(e) => setForm({ ...form, cleanliness: e.target.value as CleanlinessLevel })}
+            value={form.guestPolicy}
+            onChange={(e) => setForm({ ...form, guestPolicy: e.target.value as GuestPolicy })}
           >
-            {CLEAN_OPTIONS.map((option) => (
+            {GUEST_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
             ))}
           </select>
-        </Field>
+        </WeightedField>
 
         <Field label="Preferred area" hint="Leave blank if you're open to anywhere.">
           <input
@@ -136,8 +262,12 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
           />
         </Field>
 
-        <div className="flex gap-6">
-          <label className="flex items-center gap-2 text-sm text-slate-700">
+        <WeightedField
+          label="Smoking"
+          weight={form.smokingWeight}
+          onWeightChange={(w) => setForm({ ...form, smokingWeight: w })}
+        >
+          <label className="flex h-[38px] items-center gap-2 text-sm text-slate-700">
             <input
               type="checkbox"
               checked={form.smokingOk}
@@ -145,7 +275,14 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
             />
             Smoking is OK
           </label>
-          <label className="flex items-center gap-2 text-sm text-slate-700">
+        </WeightedField>
+
+        <WeightedField
+          label="Pets"
+          weight={form.petsWeight}
+          onWeightChange={(w) => setForm({ ...form, petsWeight: w })}
+        >
+          <label className="flex h-[38px] items-center gap-2 text-sm text-slate-700">
             <input
               type="checkbox"
               checked={form.petsOk}
@@ -153,7 +290,7 @@ export function PreferencesForm({ preference }: { preference: PreferenceValues |
             />
             Pets are OK
           </label>
-        </div>
+        </WeightedField>
 
         {error ? <ErrorNote>{error}</ErrorNote> : null}
         {saved ? (

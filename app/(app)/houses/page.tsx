@@ -1,6 +1,8 @@
 import { HouseManager } from "./HouseManager";
+import { ProfileComplaintButton } from "./ProfileComplaintButton";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { getMyHouses, requireUser } from "@/lib/auth";
+import { isVerificationWindowOpen } from "@/lib/moveIn";
 import { prisma } from "@/lib/prisma";
 
 export const metadata = { title: "My houses — Smart Mess" };
@@ -82,12 +84,30 @@ export default async function HousesPage() {
           <Card>
             <h2 className="mb-2 text-sm font-semibold text-slate-900">Housemates</h2>
             <ul className="divide-y divide-slate-100 text-sm">
-              {housemates.map((member) => (
-                <li key={member.userId} className="flex items-center justify-between py-2">
-                  <span>{member.user.name || member.user.email}</span>
-                  {member.isHouseAdmin ? <Badge tone="blue">Admin</Badge> : null}
-                </li>
-              ))}
+              {housemates.map((member) => {
+                // Post-Move-In Feedback Window: only a housemate who was
+                // already living there before this person moved in, and only
+                // while their 14-day window is still open.
+                const eligible =
+                  member.userId !== user.id &&
+                  memberships[0] &&
+                  memberships[0].joinedAt < member.joinedAt &&
+                  isVerificationWindowOpen(member.joinedAt);
+                return (
+                  <li key={member.userId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <div className="flex items-center gap-2">
+                      <span>{member.user.name || member.user.email}</span>
+                      {member.isHouseAdmin ? <Badge tone="blue">Admin</Badge> : null}
+                    </div>
+                    {eligible ? (
+                      <ProfileComplaintButton
+                        subjectUserId={member.userId}
+                        subjectName={member.user.name || member.user.email}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           </Card>
         ) : null}

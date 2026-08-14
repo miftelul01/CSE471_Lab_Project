@@ -163,24 +163,31 @@ export function joinRequestVisibilityFilter(user: SessionUser): Prisma.JoinReque
 export async function assertCanSetJoinRequestStatus(
   user: SessionUser,
   requestId: string,
-  status: "ACCEPTED" | "REJECTED" | "WITHDRAWN"
+  status: "ACCEPTED" | "REJECTED" | "CANCELLED"
 ) {
   const request = await prisma.joinRequest.findUnique({
     where: { id: requestId },
-    select: { userId: true, listing: { select: { landlordId: true, houseId: true } } },
+    select: {
+      userId: true,
+      status: true,
+      listing: { select: { id: true, landlordId: true, houseId: true, capacity: true } },
+    },
   });
   if (!request) throw new AuthzError("No such join request", 404);
+  if (request.status !== "PENDING") {
+    throw new AuthzError(`This request is already ${request.status.toLowerCase()}.`, 404);
+  }
 
   const isApplicant = request.userId === user.id;
   const isLandlord = request.listing.landlordId === user.id;
 
-  if (isApplicant && status !== "WITHDRAWN") {
+  if (isApplicant && status !== "CANCELLED") {
     throw new AuthzError("As the applicant you can only withdraw a request.");
   }
   if (!isApplicant && !isLandlord) {
     throw new AuthzError("Only the listing's landlord can accept or reject a request.");
   }
-  if (isLandlord && status === "WITHDRAWN") {
+  if (isLandlord && status === "CANCELLED") {
     throw new AuthzError("Only the applicant can withdraw their own request.");
   }
   return request;
@@ -295,6 +302,74 @@ export async function assertCanDeleteExpense(user: SessionUser, expenseId: strin
   }
 
   return expense;
+/**
+ * Data Access & Privacy Matrix — "Contact Info & Legal Name: Accessible
+ * after Mutual Match / Accepted Request" for roommate/applicant access
+ * (landlord access to their own applicants' contact info is unrestricted
+ * elsewhere and untouched by this — landlords want to be reachable).
+ *
+ * True when: the subject is the viewer themselves, the viewer is a platform
+ * admin, the viewer is the landlord of a listing the subject applied to, or
+ * there's a mutually-ACCEPTED RoommateMatchRequest between the two. Used by
+ * GET /api/matches/people to decide whether a candidate's name/phone/email
+ * are included in the response.
+ */
+export async function canSeeContactInfo(viewer: SessionUser, subjectUserId: string): Promise<boolean> {
+  if (viewer.id === subjectUserId) return true;
+  if (isPlatformAdmin(viewer)) return true;
+
+  const [isLandlordOfApplicant, mutualMatch] = await Promise.all([
+    prisma.joinRequest.findFirst({
+      where: { userId: subjectUserId, listing: { landlordId: viewer.id } },
+      select: { id: true },
+    }),
+    prisma.roommateMatchRequest.findFirst({
+      where: {
+        status: "ACCEPTED",
+        OR: [
+          { senderId: viewer.id, receiverId: subjectUserId },
+          { senderId: subjectUserId, receiverId: viewer.id },
+        ],
+      },
+      select: { id: true },
+    }),
+  ]);
+
+  return !!(isLandlordOfApplicant || mutualMatch);
+}
+
+/**
+ * Policy "sender or receiver updates a roommate match request" — the
+ * User<->User equivalent of assertCanSetJoinRequestStatus: the sender may
+ * only cancel, the receiver may only accept or reject.
+ */
+export async function assertCanSetMatchRequestStatus(
+  user: SessionUser,
+  requestId: string,
+  status: "ACCEPTED" | "REJECTED" | "CANCELLED"
+) {
+  const request = await prisma.roommateMatchRequest.findUnique({
+    where: { id: requestId },
+    select: { senderId: true, receiverId: true, status: true },
+  });
+  if (!request) throw new AuthzError("No such match request", 404);
+  if (request.status !== "PENDING") {
+    throw new AuthzError(`This request is already ${request.status.toLowerCase()}.`, 404);
+  }
+
+  const isSender = request.senderId === user.id;
+  const isReceiver = request.receiverId === user.id;
+
+  if (isSender && status !== "CANCELLED") {
+    throw new AuthzError("As the sender you can only cancel a request.");
+  }
+  if (!isSender && !isReceiver) {
+    throw new AuthzError("Only the sender or receiver can update this request.");
+  }
+  if (isReceiver && status === "CANCELLED") {
+    throw new AuthzError("Only the sender can cancel their own request.");
+  }
+  return request;
 }
 
 /* ── Menu voting (M2.2) ─────────────────────────────────────────────────── */
@@ -310,12 +385,22 @@ export async function assertCanCloseMenuVoting(user: SessionUser, houseId: strin
 /* ── Mess Court (M3.5) ──────────────────────────────────────────────────── */
 
 /** Policy "disputes visible to house and landlord". */
+/**
+ * Data Access & Privacy Matrix — "Dispute & Mess Court Logs: unlocked ONLY
+ * during an active dispute" for the landlord's view. House members and
+ * admins are unaffected; a landlord who isn't a member only sees their
+ * house's disputes while they're still live (RAISED/VOTING/ESCALATED), not
+ * ones already RESOLVED or ARCHIVED.
+ */
 export function disputeVisibilityFilter(user: SessionUser): Prisma.DisputeWhereInput {
   if (isPlatformAdmin(user)) return {};
   return {
     OR: [
       { house: { members: { some: { userId: user.id, status: "ACTIVE" } } } },
-      { house: { landlordId: user.id } },
+      {
+        house: { landlordId: user.id },
+        state: { in: ["RAISED", "VOTING", "ESCALATED"] },
+      },
     ],
   };
 }

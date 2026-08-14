@@ -114,7 +114,7 @@ export const POST = withUser(async (user, req: Request) => {
       latitude: body.latitude ?? null,
       longitude: body.longitude ?? null,
       sleepSchedule: body.sleepSchedule ?? null,
-      cleanliness: body.cleanliness ?? null,
+      cleanlinessLevel: body.cleanlinessLevel ?? null,
       allowsSmoking: body.allowsSmoking ?? null,
       allowsPets: body.allowsPets ?? null,
       isActive: true,

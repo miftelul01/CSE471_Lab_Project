@@ -12,13 +12,15 @@ import {
 } from "@/components/ui";
 import type { Listing, Match } from "@prisma/client";
 
-type MatchWithListing = Match & { listing: Listing | null };
+type BreakdownItem = { factor: string; label: string; score: number; weight: number; dealbreaker: boolean };
+type MatchWithListing = Match & { listing: Listing | null; breakdown: BreakdownItem[]; summary: string };
 
 export function MatchList() {
   const [matches, setMatches] = useState<MatchWithListing[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   // GET /api/matches re-runs the engine, so this doubles as the refresh action.
   const load = useCallback(async () => {
@@ -71,6 +73,7 @@ export function MatchList() {
           {matches.map((match) => {
             const listing = match.listing;
             if (!listing) return null;
+            const isOpen = expanded === match.id;
             return (
               <Card key={match.id}>
                 <div className="mb-1 flex items-start justify-between gap-2">
@@ -84,6 +87,30 @@ export function MatchList() {
                   {listing.roomType.toLowerCase().replace("_", " ")}
                 </p>
                 <p className="mt-2 line-clamp-2 text-sm text-slate-500">{listing.description}</p>
+
+                {match.summary ? (
+                  <button
+                    type="button"
+                    className="mt-3 text-left text-xs text-brand-700 underline"
+                    onClick={() => setExpanded(isOpen ? null : match.id)}
+                  >
+                    {isOpen ? "Hide" : "Why this score?"}
+                  </button>
+                ) : null}
+                {isOpen ? (
+                  <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
+                    <p className="font-medium text-slate-700">{match.summary}</p>
+                    {match.breakdown.map((item) => (
+                      <div key={item.factor} className="flex items-center justify-between">
+                        <span>
+                          {item.label}
+                          {item.dealbreaker ? <span className="ml-1 text-rose-600">(dealbreaker)</span> : null}
+                        </span>
+                        <span className="font-mono">{Math.round(item.score * 100)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 <div className="mt-4 flex gap-2">
                   <button

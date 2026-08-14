@@ -52,7 +52,7 @@ export const PATCH = withUser(async (user, req: Request, { params }: Params) => 
   const isApplicant = application.userId === user.id;
   const runsTheFlat = await isHouseAdmin(user.id, application.post.houseId);
 
-  if (isApplicant && body.status !== "WITHDRAWN") {
+  if (isApplicant && body.status !== "CANCELLED") {
     return forbidden("As the applicant you can only withdraw.");
   }
   if (!isApplicant && !runsTheFlat) {

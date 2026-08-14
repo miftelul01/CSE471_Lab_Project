@@ -19,7 +19,8 @@ const STATUS_TONE: Record<JoinRequestStatus, "amber" | "green" | "red" | "slate"
   PENDING: "amber",
   ACCEPTED: "green",
   REJECTED: "red",
-  WITHDRAWN: "slate",
+  CANCELLED: "slate",
+  EXPIRED: "slate",
 };
 
 export function JoinRequestList({
@@ -78,7 +79,7 @@ export function JoinRequestList({
                   type="button"
                   className={secondaryButtonClass}
                   disabled={busy === request.id}
-                  onClick={() => setStatus(request.id, "WITHDRAWN")}
+                  onClick={() => setStatus(request.id, "CANCELLED")}
                 >
                   Withdraw
                 </button>

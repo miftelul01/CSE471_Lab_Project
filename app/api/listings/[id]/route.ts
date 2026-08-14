@@ -50,7 +50,7 @@ export const PATCH = withUser(async (user, req: Request, { params }: Params) => 
   if (body.latitude !== undefined) data.latitude = body.latitude;
   if (body.longitude !== undefined) data.longitude = body.longitude;
   if (body.sleepSchedule !== undefined) data.sleepSchedule = body.sleepSchedule;
-  if (body.cleanliness !== undefined) data.cleanliness = body.cleanliness;
+  if (body.cleanlinessLevel !== undefined) data.cleanlinessLevel = body.cleanlinessLevel;
   if (body.allowsSmoking !== undefined) data.allowsSmoking = body.allowsSmoking;
   if (body.allowsPets !== undefined) data.allowsPets = body.allowsPets;
   // Allows re-listing something that was delisted.

@@ -12,7 +12,14 @@
  * walked through the state machine rather than inserted in their final state.
  */
 
-import { PrismaClient, type CleanlinessLevel, type RoomType, type SleepSchedule, type UserRole } from "@prisma/client";
+import {
+  PrismaClient,
+  type GuestPolicy,
+  type PreferenceWeight,
+  type RoomType,
+  type SleepSchedule,
+  type UserRole,
+} from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -28,6 +35,8 @@ const PEOPLE: { key: string; name: string; role: UserRole; phone: string }[] = [
   { key: "tanvir", name: "Tanvir Ahmed", role: "RESIDENT", phone: "01711000005" },
   { key: "sadia", name: "Sadia Islam", role: "RESIDENT", phone: "01711000006" },
   { key: "arif", name: "Arif Hossain", role: "RESIDENT", phone: "01711000007" },
+  { key: "moinul", name: "Moinul Islam", role: "RESIDENT", phone: "01711000010" },
+  { key: "farhana", name: "Farhana Akter", role: "RESIDENT", phone: "01711000011" },
 ];
 
 const HOUSES = [
@@ -39,24 +48,25 @@ const HOUSES = [
   { key: "dhanmondi", name: "Dhanmondi Ladies Hostel", owner: "miftelul", area: "Dhanmondi", address: "House 9, Road 27", lat: 23.7461, lng: 90.3742 },
 ];
 
+// 1 (relaxed) - 5 (very tidy) — same scale the matching engine uses.
 type L = {
   house: string; title: string; rent: number; type: RoomType; cap: number; amenities: string[];
-  sleep: SleepSchedule | null; clean: CleanlinessLevel | null; smoking: boolean | null;
+  sleep: SleepSchedule | null; clean: number | null; smoking: boolean | null;
   pets: boolean | null; desc: string; inactive?: boolean;
 };
 
 const LISTINGS: L[] = [
-  { house: "bashundhara", title: "Single room near BRAC University", rent: 9000, type: "SINGLE", cap: 1, amenities: ["wifi", "attached bath", "generator"], sleep: "EARLY_BIRD", clean: "VERY_TIDY", smoking: false, pets: false, desc: "Furnished single with attached bath. Five minutes' walk to campus, 24/7 generator backup." },
-  { house: "bashundhara", title: "Shared twin room, Bashundhara", rent: 6500, type: "SHARED", cap: 2, amenities: ["wifi", "fridge", "balcony"], sleep: "FLEXIBLE", clean: "MODERATE", smoking: false, pets: false, desc: "Twin sharing with a balcony. Fridge and water filter included." },
-  { house: "merul", title: "Seat in 4-seater, meals included", rent: 5500, type: "SEAT", cap: 4, amenities: ["wifi", "meals", "fridge"], sleep: "NIGHT_OWL", clean: "MODERATE", smoking: true, pets: false, desc: "Budget seat with three meals a day from the house cook." },
-  { house: "merul", title: "Master bedroom with balcony", rent: 12000, type: "MASTER", cap: 2, amenities: ["wifi", "balcony", "generator"], sleep: "FLEXIBLE", clean: "MODERATE", smoking: false, pets: false, desc: "Spacious master bedroom, suitable for two people sharing." },
-  { house: "banani", title: "Master bedroom, Banani", rent: 18000, type: "MASTER", cap: 2, amenities: ["wifi", "lift", "parking", "balcony"], sleep: "FLEXIBLE", clean: "VERY_TIDY", smoking: false, pets: true, desc: "Premium master with attached bath, lift and parking. Pet friendly." },
-  { house: "banani", title: "Single room, Banani (quiet floor)", rent: 14000, type: "SINGLE", cap: 1, amenities: ["wifi", "lift", "security"], sleep: "EARLY_BIRD", clean: "VERY_TIDY", smoking: false, pets: false, desc: "Quiet corner room on the fourth floor. 24-hour security." },
-  { house: "mohakhali", title: "Entire 2-bed flat, Mohakhali", rent: 26000, type: "ENTIRE_FLAT", cap: 4, amenities: ["wifi", "lift", "security", "parking"], sleep: "FLEXIBLE", clean: "MODERATE", smoking: false, pets: false, desc: "Whole flat — ideal for a small mess of three or four." },
-  { house: "mohakhali", title: "Seat in 3-seater, Mohakhali", rent: 6000, type: "SEAT", cap: 3, amenities: ["wifi", "meals"], sleep: "NIGHT_OWL", clean: "RELAXED", smoking: true, pets: false, desc: "Affordable seat close to the bus stand." },
-  { house: "uttara", title: "Budget single room, Uttara", rent: 7500, type: "SINGLE", cap: 1, amenities: ["wifi", "generator"], sleep: "NIGHT_OWL", clean: "RELAXED", smoking: true, pets: false, desc: "Simple single room, walking distance to Uttara Sector 10 market." },
-  { house: "uttara", title: "Shared room, Uttara Sector 10", rent: 5000, type: "SHARED", cap: 2, amenities: ["wifi"], sleep: "FLEXIBLE", clean: "MODERATE", smoking: false, pets: false, desc: "Cheapest option on the platform. Basic but clean." },
-  { house: "dhanmondi", title: "Single seat, Dhanmondi (ladies)", rent: 8500, type: "SEAT", cap: 1, amenities: ["wifi", "meals", "security"], sleep: "EARLY_BIRD", clean: "VERY_TIDY", smoking: false, pets: false, desc: "Ladies-only hostel with meals and a strict 10pm gate time." },
+  { house: "bashundhara", title: "Single room near BRAC University", rent: 9000, type: "SINGLE", cap: 1, amenities: ["wifi", "attached bath", "generator"], sleep: "EARLY_BIRD", clean: 5, smoking: false, pets: false, desc: "Furnished single with attached bath. Five minutes' walk to campus, 24/7 generator backup." },
+  { house: "bashundhara", title: "Shared twin room, Bashundhara", rent: 6500, type: "SHARED", cap: 2, amenities: ["wifi", "fridge", "balcony"], sleep: "FLEXIBLE", clean: 3, smoking: false, pets: false, desc: "Twin sharing with a balcony. Fridge and water filter included." },
+  { house: "merul", title: "Seat in 4-seater, meals included", rent: 5500, type: "SEAT", cap: 4, amenities: ["wifi", "meals", "fridge"], sleep: "NIGHT_OWL", clean: 3, smoking: true, pets: false, desc: "Budget seat with three meals a day from the house cook." },
+  { house: "merul", title: "Master bedroom with balcony", rent: 12000, type: "MASTER", cap: 2, amenities: ["wifi", "balcony", "generator"], sleep: "FLEXIBLE", clean: 3, smoking: false, pets: false, desc: "Spacious master bedroom, suitable for two people sharing." },
+  { house: "banani", title: "Master bedroom, Banani", rent: 18000, type: "MASTER", cap: 2, amenities: ["wifi", "lift", "parking", "balcony"], sleep: "FLEXIBLE", clean: 5, smoking: false, pets: true, desc: "Premium master with attached bath, lift and parking. Pet friendly." },
+  { house: "banani", title: "Single room, Banani (quiet floor)", rent: 14000, type: "SINGLE", cap: 1, amenities: ["wifi", "lift", "security"], sleep: "EARLY_BIRD", clean: 5, smoking: false, pets: false, desc: "Quiet corner room on the fourth floor. 24-hour security." },
+  { house: "mohakhali", title: "Entire 2-bed flat, Mohakhali", rent: 26000, type: "ENTIRE_FLAT", cap: 4, amenities: ["wifi", "lift", "security", "parking"], sleep: "FLEXIBLE", clean: 3, smoking: false, pets: false, desc: "Whole flat — ideal for a small mess of three or four." },
+  { house: "mohakhali", title: "Seat in 3-seater, Mohakhali", rent: 6000, type: "SEAT", cap: 3, amenities: ["wifi", "meals"], sleep: "NIGHT_OWL", clean: 1, smoking: true, pets: false, desc: "Affordable seat close to the bus stand." },
+  { house: "uttara", title: "Budget single room, Uttara", rent: 7500, type: "SINGLE", cap: 1, amenities: ["wifi", "generator"], sleep: "NIGHT_OWL", clean: 1, smoking: true, pets: false, desc: "Simple single room, walking distance to Uttara Sector 10 market." },
+  { house: "uttara", title: "Shared room, Uttara Sector 10", rent: 5000, type: "SHARED", cap: 2, amenities: ["wifi"], sleep: "FLEXIBLE", clean: 3, smoking: false, pets: false, desc: "Cheapest option on the platform. Basic but clean." },
+  { house: "dhanmondi", title: "Single seat, Dhanmondi (ladies)", rent: 8500, type: "SEAT", cap: 1, amenities: ["wifi", "meals", "security"], sleep: "EARLY_BIRD", clean: 5, smoking: false, pets: false, desc: "Ladies-only hostel with meals and a strict 10pm gate time." },
   { house: "dhanmondi", title: "Old seat, Dhanmondi (no longer available)", rent: 4500, type: "SINGLE", cap: 1, amenities: ["wifi"], sleep: null, clean: null, smoking: null, pets: null, desc: "Taken down by the landlord. Kept to demonstrate a delisted property — it stays out of search, but saved shortlists and past applications survive.", inactive: true },
 ];
 
@@ -69,6 +79,8 @@ const SETTINGS = [
 ];
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+
+const W = (v: PreferenceWeight = "MEDIUM") => v;
 
 async function main() {
   console.log("Clearing previous demo data…");
@@ -121,12 +133,13 @@ async function main() {
 
   // The first resident into a house becomes its flat admin — the person who
   // runs the household and may advertise a spare seat. Later joiners are
-  // ordinary residents.
+  // ordinary residents. joinedAt is staggered so the Post-Move-In Feedback
+  // Window has a realistic "who moved in when" order to check eligibility against.
   await prisma.houseMember.createMany({
     data: [
-      { houseId: houseIds.bashundhara, userId: ids.nusrat, role: "RESIDENT", status: "ACTIVE", isHouseAdmin: true },
-      { houseId: houseIds.bashundhara, userId: ids.tanvir, role: "RESIDENT", status: "ACTIVE" },
-      { houseId: houseIds.banani, userId: ids.sadia, role: "RESIDENT", status: "ACTIVE", isHouseAdmin: true },
+      { houseId: houseIds.bashundhara, userId: ids.nusrat, role: "RESIDENT", status: "ACTIVE", isHouseAdmin: true, joinedAt: daysAgo(60) },
+      { houseId: houseIds.bashundhara, userId: ids.tanvir, role: "RESIDENT", status: "ACTIVE", joinedAt: daysAgo(5) },
+      { houseId: houseIds.banani, userId: ids.sadia, role: "RESIDENT", status: "ACTIVE", isHouseAdmin: true, joinedAt: daysAgo(90) },
     ],
   });
   console.log(`  ${HOUSES.length} houses, 3 residents placed`);
@@ -141,7 +154,7 @@ async function main() {
         title: l.title, description: l.desc, rent: l.rent,
         area: h.area, address: h.address, roomType: l.type, capacity: l.cap,
         amenities: l.amenities, latitude: h.lat, longitude: h.lng,
-        sleepSchedule: l.sleep, cleanliness: l.clean,
+        sleepSchedule: l.sleep, cleanlinessLevel: l.clean,
         allowsSmoking: l.smoking, allowsPets: l.pets, isActive: !l.inactive,
       },
     });
@@ -149,13 +162,43 @@ async function main() {
   }
   console.log(`  ${LISTINGS.length} listings (1 delisted)`);
 
-  console.log("Creating preferences, favourites and join requests…");
+  console.log("Creating preferences (with custom weighting)…");
   await prisma.preference.createMany({
     data: [
-      { userId: ids.nusrat, budgetMin: 6000, budgetMax: 10000, sleepSchedule: "EARLY_BIRD", cleanliness: "VERY_TIDY", smokingOk: false, petsOk: false, preferredArea: "Bashundhara" },
-      { userId: ids.tanvir, budgetMin: 5000, budgetMax: 8000, sleepSchedule: "NIGHT_OWL", cleanliness: "RELAXED", smokingOk: true, petsOk: false, preferredArea: "Merul Badda" },
-      { userId: ids.sadia, budgetMin: 12000, budgetMax: 20000, sleepSchedule: "FLEXIBLE", cleanliness: "VERY_TIDY", smokingOk: false, petsOk: true, preferredArea: "Banani" },
-      { userId: ids.arif, budgetMin: 5000, budgetMax: 9000, sleepSchedule: "FLEXIBLE", cleanliness: "MODERATE", smokingOk: false, petsOk: false, preferredArea: null },
+      {
+        userId: ids.nusrat, budgetMin: 6000, budgetMax: 10000, sleepSchedule: "EARLY_BIRD",
+        cleanlinessLevel: 5, noiseTolerance: 2, guestPolicy: "RARELY", smokingOk: false, petsOk: false,
+        preferredArea: "Bashundhara", cleanlinessWeight: W("HIGH"), smokingWeight: W("MUST_HAVE"),
+      },
+      {
+        userId: ids.tanvir, budgetMin: 5000, budgetMax: 8000, sleepSchedule: "NIGHT_OWL",
+        cleanlinessLevel: 2, noiseTolerance: 4, guestPolicy: "FREQUENTLY", smokingOk: true, petsOk: false,
+        preferredArea: "Merul Badda", noiseWeight: W("LOW"),
+      },
+      {
+        userId: ids.sadia, budgetMin: 12000, budgetMax: 20000, sleepSchedule: "FLEXIBLE",
+        cleanlinessLevel: 5, noiseTolerance: 3, guestPolicy: "OCCASIONALLY", smokingOk: false, petsOk: true,
+        preferredArea: "Banani", petsWeight: W("HIGH"),
+      },
+      {
+        userId: ids.arif, budgetMin: 5000, budgetMax: 9000, sleepSchedule: "FLEXIBLE",
+        cleanlinessLevel: 3, noiseTolerance: 3, guestPolicy: "OCCASIONALLY", smokingOk: false, petsOk: false,
+        preferredArea: null,
+      },
+      {
+        // Deliberately mismatched vs. everyone else, and MUST_HAVE on a
+        // budget nobody else is near — demonstrates the hard-dealbreaker cap.
+        userId: ids.moinul, budgetMin: 40000, budgetMax: 50000, sleepSchedule: "NIGHT_OWL",
+        cleanlinessLevel: 1, noiseTolerance: 5, guestPolicy: "FREQUENTLY", smokingOk: true, petsOk: true,
+        preferredArea: "Gulshan", budgetWeight: W("MUST_HAVE"),
+      },
+      {
+        // Close match to arif — used to demo User<->User matching + a mutual
+        // RoommateMatchRequest below.
+        userId: ids.farhana, budgetMin: 5500, budgetMax: 9500, sleepSchedule: "FLEXIBLE",
+        cleanlinessLevel: 3, noiseTolerance: 3, guestPolicy: "OCCASIONALLY", smokingOk: false, petsOk: false,
+        preferredArea: null,
+      },
     ],
   });
 
@@ -176,7 +219,50 @@ async function main() {
       { userId: ids.nusrat, listingId: listingIds[0], status: "ACCEPTED", message: "I'd like to move in from the 1st." },
     ],
   });
-  console.log("  4 preference profiles, 5 favourites, 3 join requests");
+  console.log("  6 preference profiles, 5 favourites, 3 join requests");
+
+  console.log("Creating a mutual roommate match request (arif <-> farhana)…");
+  await prisma.roommateMatchRequest.create({
+    data: {
+      senderId: ids.arif,
+      receiverId: ids.farhana,
+      status: "ACCEPTED",
+      message: "Our budgets and schedules look really close — want to look for a place together?",
+    },
+  });
+  await prisma.message.createMany({
+    data: [
+      { senderId: ids.arif, recipientId: ids.farhana, body: "Hey! Our preferences overlap a lot — thinking of teaming up on a search?" },
+      { senderId: ids.farhana, recipientId: ids.arif, body: "Yes, I saw that too. Happy to look at listings together." },
+    ],
+  });
+
+  console.log("Creating a block + a report (Report & Block safety system)…");
+  await prisma.userBlock.create({ data: { blockerId: ids.sadia, blockedId: ids.moinul } });
+  await prisma.report.create({
+    data: {
+      reporterId: ids.arif,
+      targetType: "ROOMMATE_POST",
+      targetId: listingIds[0],
+      reason: "Spam — same post copy-pasted across five listings.",
+      status: "OPEN",
+    },
+  });
+
+  console.log("Creating a verified profile badge…");
+  await prisma.verificationRequest.create({
+    data: {
+      userId: ids.arif,
+      phone: "01711000007",
+      note: "BRACU student ID attached.",
+      status: "VERIFIED",
+      reviewedById: ids.admin,
+      reviewedAt: daysAgo(2),
+    },
+  });
+  await prisma.verificationRequest.create({
+    data: { userId: ids.tanvir, phone: "01711000005", status: "PENDING" },
+  });
 
   console.log("Creating roommate posts…");
   const nusratPost = await prisma.roommatePost.create({
@@ -190,7 +276,7 @@ async function main() {
       seatsAvailable: 1,
       availableFrom: new Date(Date.now() + 14 * 86_400_000),
       sleepSchedule: "EARLY_BIRD",
-      cleanliness: "VERY_TIDY",
+      cleanlinessLevel: 5,
       smokingOk: false,
       petsOk: false,
     },
@@ -204,7 +290,7 @@ async function main() {
       monthlyShare: 15000,
       seatsAvailable: 1,
       sleepSchedule: "FLEXIBLE",
-      cleanliness: "VERY_TIDY",
+      cleanlinessLevel: 5,
       smokingOk: false,
       petsOk: true,
     },
@@ -313,14 +399,31 @@ async function main() {
   await prisma.dispute.update({ where: { id: rent.id }, data: { state: "ESCALATED" } });
   console.log("  3 disputes — 1 raised, 1 voting, 1 escalated (waiting for an admin)");
 
+  // Post-Move-In Feedback Window demo: nusrat (joined 60 days ago) can file
+  // a profile complaint about tanvir (joined 5 days ago — window still open).
+  await prisma.dispute.create({
+    data: {
+      houseId: houseIds.bashundhara,
+      raisedById: ids.nusrat,
+      againstUserId: ids.tanvir,
+      title: "Not as tidy as the profile said",
+      description: "Preferences said cleanliness 4-5, but common areas are left messy most days.",
+      category: "PROFILE_DISHONESTY",
+      state: "RAISED",
+    },
+  });
+  console.log("  1 post-move-in profile complaint (RAISED, awaiting admin review)");
+
   console.log(`\nDone. Password for every account is ${PASSWORD}\n`);
   for (const p of PEOPLE) {
     console.log(`  ${`${p.key}@${DOMAIN}`.padEnd(30)} ${p.role.padEnd(9)} ${p.name}`);
   }
   console.log("\n  Demo path:");
   console.log(`    miftelul@${DOMAIN}  landlord — post / edit / delist listings, incoming join requests`);
-  console.log(`    arif@${DOMAIN}      resident — search, filter, shortlist, request to join, matches`);
-  console.log(`    admin@${DOMAIN}     admin    — /admin, resolve the escalated dispute`);
+  console.log(`    arif@${DOMAIN}      resident — search, filter, shortlist, request to join, matches, verified badge`);
+  console.log(`    farhana@${DOMAIN}   resident — mutual roommate match + messages with arif`);
+  console.log(`    moinul@${DOMAIN}    resident — mismatched profile, MUST_HAVE budget dealbreaker, blocked by sadia`);
+  console.log(`    admin@${DOMAIN}     admin    — /admin, resolve the escalated dispute, /admin/profile-complaints`);
 }
 
 main()
