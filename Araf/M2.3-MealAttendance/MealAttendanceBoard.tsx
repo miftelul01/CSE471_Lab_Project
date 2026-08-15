@@ -57,6 +57,7 @@ export function MealAttendanceBoard({
 }: MealAttendancePageData) {
   const router = useRouter();
   const [busyMealId, setBusyMealId] = useState<string | null>(null);
+  const [ratingMealId, setRatingMealId] = useState<string | null>(null);
   const [isSaving, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -128,6 +129,27 @@ export function MealAttendanceBoard({
       setSuccess("Meal slot saved.");
       router.refresh();
     });
+  }
+
+  /** Post-Meal Satisfaction Rating (M2.2 scoped enhancement) — only after the meal has locked. */
+  async function rateMeal(meal: MealAttendanceView, stars: number) {
+    if (ratingMealId) return;
+    setRatingMealId(meal.id);
+    showFeedback(null, null);
+
+    const response = await fetch(`/api/meals/${meal.id}/rating`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stars }),
+    });
+    const payload = await parseJson(response);
+    setRatingMealId(null);
+    if (!response.ok) {
+      showFeedback(payload.error ?? "Could not save your rating.");
+      return;
+    }
+    setSuccess("Thanks for the rating.");
+    router.refresh();
   }
 
   return (
@@ -253,6 +275,28 @@ export function MealAttendanceBoard({
                         </p>
                       ) : null}
                     </div>
+
+                    {meal.locked ? (
+                      <div className="mt-3 flex items-center gap-1">
+                        <span className="text-xs text-slate-500">Rate this meal:</span>
+                        {[1, 2, 3, 4, 5].map((stars) => (
+                          <button
+                            key={stars}
+                            type="button"
+                            className={`text-lg leading-none ${
+                              meal.myRating !== null && stars <= meal.myRating
+                                ? "text-amber-500"
+                                : "text-slate-300 hover:text-amber-400"
+                            }`}
+                            disabled={ratingMealId === meal.id}
+                            onClick={() => rateMeal(meal, stars)}
+                            aria-label={`${stars} star${stars > 1 ? "s" : ""}`}
+                          >
+                            ★
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
 
                     <div className="mt-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Roster</p>

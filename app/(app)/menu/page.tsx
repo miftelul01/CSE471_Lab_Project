@@ -1,13 +1,10 @@
 import { MenuBoard } from "./MenuBoard";
 import { EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import { getActiveHouseId, requireUser } from "@/lib/auth";
-import { isHouseAdmin } from "@/lib/authz";
-import { mondayOf } from "@/lib/menu";
-import { prisma } from "@/lib/prisma";
 
-export const metadata = { title: "Weekly menu — Smart Mess" };
+export const metadata = { title: "Daily menu voting — Smart Mess" };
 
-/** M2.2 Weekly Menu Proposal & Voting System — Mahia Tanzin. */
+/** M2.2 Daily Meal Proposal & Ranked-Choice Voting — Mahia Tanzin. */
 export default async function MenuPage() {
   const user = await requireUser();
   const houseId = await getActiveHouseId(user.id);
@@ -16,8 +13,8 @@ export default async function MenuPage() {
     return (
       <div>
         <PageHeader
-          title="Weekly menu"
-          subtitle="Propose meal plans and vote as a house. The highest-voted plan becomes the official menu."
+          title="Daily menu voting"
+          subtitle="Propose a day's meals and rank the house's candidates — each day is decided independently."
         />
         <EmptyState
           title="Join a house to use menu voting"
@@ -27,48 +24,14 @@ export default async function MenuPage() {
     );
   }
 
-  const [proposals, canClose] = await Promise.all([
-    prisma.menuProposal.findMany({
-      where: { houseId },
-      include: {
-        items: true,
-        votes: { select: { userId: true, vote: true } },
-        proposedBy: { select: { id: true, name: true } },
-      },
-      orderBy: [{ weekStartDate: "desc" }, { createdAt: "asc" }],
-    }),
-    isHouseAdmin(user.id, houseId),
-  ]);
-
-  // `proposals` is sorted by week descending, so simply taking the first
-  // APPROVED row returns whichever week is furthest in the future — and then
-  // labels it "this week's". Pick the current week explicitly, and fall back to
-  // the nearest upcoming one only when this week has not been decided yet.
-  const thisMonday = mondayOf(new Date()).getTime();
-  const approved = proposals.filter((p) => p.status === "APPROVED");
-
-  const currentMenu = approved.find((p) => p.weekStartDate.getTime() === thisMonday) ?? null;
-  const upcomingMenu = currentMenu
-    ? null
-    : ([...approved].reverse().find((p) => p.weekStartDate.getTime() > thisMonday) ?? null);
-
-  const openProposals = proposals.filter((p) => p.status === "OPEN");
-
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Weekly menu"
-        subtitle="Propose meal plans and vote as a house. The highest-voted plan becomes the official menu."
-        action={<LinkButton href="/menu/new">Propose a menu</LinkButton>}
+        title="Daily menu voting"
+        subtitle="Propose a day's meals and rank the house's candidates — each day is decided independently by ranked-choice vote."
+        action={<LinkButton href="/menu/new">Propose a meal</LinkButton>}
       />
-
-      <MenuBoard
-        approvedMenu={currentMenu ?? upcomingMenu}
-        approvedIsThisWeek={Boolean(currentMenu)}
-        openProposals={openProposals}
-        currentUserId={user.id}
-        canCloseVoting={canClose}
-      />
+      <MenuBoard />
     </div>
   );
 }

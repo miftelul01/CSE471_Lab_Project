@@ -302,6 +302,8 @@ export async function assertCanDeleteExpense(user: SessionUser, expenseId: strin
   }
 
   return expense;
+}
+
 /**
  * Data Access & Privacy Matrix — "Contact Info & Legal Name: Accessible
  * after Mutual Match / Accepted Request" for roommate/applicant access

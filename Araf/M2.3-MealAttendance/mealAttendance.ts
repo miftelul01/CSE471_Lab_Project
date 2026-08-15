@@ -2,7 +2,7 @@ import { AttendanceStatus, MealType, Prisma } from "@prisma/client";
 
 import { HttpError } from "@/lib/api";
 import { AuthzError, isHouseAdmin } from "@/lib/authz";
-import { mondayOf } from "@/lib/menu";
+import { dateForDay, mondayOf } from "@/lib/menu";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -37,12 +37,13 @@ type MealRow = {
   houseId: string;
   mealDate: Date;
   mealType: MealType;
-  menuProposalId: string | null;
+  dayProposalId: string | null;
   costPerHead: Prisma.Decimal | null;
   headcount: number;
   locksAt: Date | null;
   attendance: MealAttendanceRow[];
-  menuProposal: { title: string } | null;
+  dayProposal: { breakfast: string | null; lunch: string | null; dinner: string | null } | null;
+  ratings: { userId: string; stars: number }[];
 };
 
 export type MealAttendanceView = {
@@ -56,6 +57,8 @@ export type MealAttendanceView = {
   locksAt: string | null;
   locked: boolean;
   myAttendance: AttendanceStatus;
+  /** Post-Meal Satisfaction Rating (M2.2 scoped enhancement) — the caller's own 1-5 rating, once given. */
+  myRating: number | null;
   attendees: Array<{ id: string; userId: string; name: string; status: AttendanceStatus }>;
 };
 
@@ -67,7 +70,8 @@ export type MealAttendancePageData = {
 
 const MEAL_INCLUDE = {
   attendance: { include: { user: { select: { id: true, name: true } } } },
-  menuProposal: { select: { title: true } },
+  dayProposal: { select: { breakfast: true, lunch: true, dinner: true } },
+  ratings: { select: { userId: true, stars: true } },
 } as const;
 
 /* ── Dates ──────────────────────────────────────────────────────────────── */
@@ -115,7 +119,7 @@ export type MealSlotInput = {
   mealType: MealType;
   costPerHead?: number | string | null;
   locksAt?: string | null;
-  menuProposalId?: string | null;
+  dayProposalId?: string | null;
 };
 
 type ValidatedMealSlot = {
@@ -123,7 +127,7 @@ type ValidatedMealSlot = {
   mealType: MealType;
   costPerHead: Prisma.Decimal | null;
   locksAt: Date;
-  menuProposalId: string | null;
+  dayProposalId: string | null;
 };
 
 /**
@@ -173,7 +177,7 @@ export function validateMealSlot(input: MealSlotInput): ValidatedMealSlot {
     mealType: input.mealType,
     costPerHead,
     locksAt,
-    menuProposalId: input.menuProposalId ?? null,
+    dayProposalId: input.dayProposalId ?? null,
   };
 }
 
@@ -335,6 +339,13 @@ async function syncMealExpense(tx: Prisma.TransactionClient, mealId: string, act
 
 /* ── Reading ────────────────────────────────────────────────────────────── */
 
+/** e.g. "Khichuri / Beef curry" from whichever of breakfast/lunch/dinner the winning candidate filled in. */
+function dayProposalTitle(proposal: MealRow["dayProposal"]): string | null {
+  if (!proposal) return null;
+  const parts = [proposal.breakfast, proposal.lunch, proposal.dinner].filter((v): v is string => !!v);
+  return parts.length > 0 ? parts.join(" / ") : null;
+}
+
 function mapMealRow(meal: MealRow, userId: string): MealAttendanceView {
   const myAttendance =
     meal.attendance.find((entry) => entry.userId === userId)?.status ?? AttendanceStatus.ATTENDING;
@@ -344,12 +355,13 @@ function mapMealRow(meal: MealRow, userId: string): MealAttendanceView {
     mealDate: meal.mealDate.toISOString(),
     mealType: meal.mealType,
     mealLabel: formatMealLabel(meal.mealDate, meal.mealType),
-    menuProposalTitle: meal.menuProposal?.title ?? null,
+    menuProposalTitle: dayProposalTitle(meal.dayProposal),
     costPerHead: meal.costPerHead ? Number(meal.costPerHead) : null,
     headcount: meal.headcount,
     locksAt: meal.locksAt ? meal.locksAt.toISOString() : null,
     locked: meal.locksAt ? meal.locksAt.getTime() < Date.now() : false,
     myAttendance,
+    myRating: meal.ratings.find((r) => r.userId === userId)?.stars ?? null,
     attendees: meal.attendance.map((entry) => ({
       id: entry.id,
       userId: entry.userId,
@@ -385,15 +397,20 @@ async function ensureMealWindow(
   const first = dates[0];
   const last = dates[dates.length - 1];
 
-  const [activeMembers, approvedProposals, existingMeals] = await Promise.all([
+  const [activeMembers, decidedResults, existingMeals] = await Promise.all([
     prisma.houseMember.findMany({ where: { houseId, status: "ACTIVE" }, select: { userId: true } }),
-    prisma.menuProposal.findMany({
+    // M2.2 decides one winning candidate PER DAY (not per week) — see
+    // lib/menu.ts advanceDailyVote. DECIDED carries a real winner; FALLBACK
+    // may carry one too (the previous week's winner for that exact day) or
+    // null (falls through to the house's default safe meal, shown with no
+    // linked candidate).
+    prisma.dailyMealResult.findMany({
       where: {
         houseId,
-        status: "APPROVED",
+        status: { in: ["DECIDED", "FALLBACK"] },
         weekStartDate: { gte: mondayOf(first), lte: mondayOf(last) },
       },
-      select: { id: true, weekStartDate: true },
+      select: { weekStartDate: true, dayOfWeek: true, winningProposalId: true },
     }),
     prisma.meal.findMany({
       where: { houseId, mealDate: { gte: first, lte: last } },
@@ -401,7 +418,9 @@ async function ensureMealWindow(
     }),
   ]);
 
-  const proposalByWeek = new Map(approvedProposals.map((p) => [dateKey(p.weekStartDate), p.id]));
+  const winningProposalByDate = new Map(
+    decidedResults.map((r) => [dateKey(dateForDay(r.weekStartDate, r.dayOfWeek)), r.winningProposalId])
+  );
   const present = new Set(existingMeals.map((m) => `${dateKey(m.mealDate)}|${m.mealType}`));
 
   const missingMeals = dates.flatMap((mealDate) =>
@@ -410,7 +429,7 @@ async function ensureMealWindow(
         houseId,
         mealDate,
         mealType,
-        menuProposalId: proposalByWeek.get(dateKey(mondayOf(mealDate))) ?? null,
+        dayProposalId: winningProposalByDate.get(dateKey(mealDate)) ?? null,
         locksAt: endOfDay(mealDate),
       })
     )
@@ -515,12 +534,12 @@ export async function saveMealSlot(userId: string, houseId: string, input: MealS
         mealType: valid.mealType,
         costPerHead: valid.costPerHead,
         locksAt: valid.locksAt,
-        menuProposalId: valid.menuProposalId,
+        dayProposalId: valid.dayProposalId,
       },
       update: {
         costPerHead: valid.costPerHead,
         locksAt: valid.locksAt,
-        menuProposalId: valid.menuProposalId,
+        dayProposalId: valid.dayProposalId,
       },
       select: { id: true },
     });
