@@ -21,20 +21,11 @@ import "maplibre-gl/dist/maplibre-gl.css";
  * at all because a key is missing would take the house's notes down with it.
  */
 
-const STYLE_URL = "/api/neighborhood/tiles/styles/osm-liberty/style.json";
-
-/** Used when no tile provider is configured — an empty but valid style. */
+/** Shown only if the basemap itself fails to load — a valid, empty style. */
 const BLANK_STYLE: StyleSpecification = {
   version: 8,
   sources: {},
-  layers: [
-    {
-      id: "background",
-      type: "background",
-      paint: { "background-color": "#e8ede9" },
-    },
-  ],
-  glyphs: undefined,
+  layers: [{ id: "background", type: "background", paint: { "background-color": "#e8ede9" } }],
 };
 
 /** Dhaka, for a house that has not placed its pin yet. */
@@ -48,7 +39,7 @@ export type MapMarker = Pick<BookmarkView, "id" | "name" | "category" | "lat" | 
 export function HouseMap({
   pin,
   markers,
-  tilesEnabled,
+  styleUrl,
   onLongPress,
   draftPin,
   routeGeometry,
@@ -56,7 +47,8 @@ export function HouseMap({
 }: {
   pin: Coords | null;
   markers: MapMarker[];
-  tilesEnabled: boolean;
+  /** Resolved server-side: our key-protecting proxy, or a keyless public basemap. */
+  styleUrl: string;
   /** Enables drop-a-pin, used by house setup and by adding a place by hand. */
   onLongPress?: (coords: Coords) => void;
   draftPin?: Coords | null;
@@ -68,6 +60,7 @@ export function HouseMap({
   const map = useRef<MapLibreMap | null>(null);
   const drawn = useRef<maplibregl.Marker[]>([]);
   const [ready, setReady] = useState(false);
+  const [styleFailed, setStyleFailed] = useState(false);
 
   // Long-press needs the latest callback without tearing the map down and
   // rebuilding it every time the parent re-renders.
@@ -80,7 +73,7 @@ export function HouseMap({
     const center = pin ?? FALLBACK_CENTER;
     const instance = new maplibregl.Map({
       container: container.current,
-      style: tilesEnabled ? STYLE_URL : BLANK_STYLE,
+      style: styleUrl,
       center: [center.lng, center.lat],
       zoom: pin ? 14 : 11,
       attributionControl: { compact: true },
@@ -110,9 +103,18 @@ export function HouseMap({
     instance.on("touchcancel", cancelTouch);
 
     instance.on("load", () => setReady(true));
-    // A style that fails to load (proxy down, key revoked) must not take the
-    // whole page with it — the pins are drawn on top and still render.
-    instance.on("error", (event) => console.warn("[m2.4 map]", event.error?.message ?? event));
+    // A basemap that fails to load (offline, provider down, key revoked) must
+    // not take the page with it. Swap in the blank style so the pins — which
+    // are DOM markers drawn on top, not part of the style — still render, and
+    // say why the streets are missing rather than showing a mute grey box.
+    instance.on("error", (event) => {
+      const message = event.error?.message ?? String(event);
+      console.warn("[m2.4 map]", message);
+      if (!instance.isStyleLoaded() && !styleFailed) {
+        setStyleFailed(true);
+        instance.setStyle(BLANK_STYLE);
+      }
+    });
 
     map.current = instance;
 
@@ -247,10 +249,10 @@ export function HouseMap({
   return (
     <div className="relative overflow-hidden rounded-xl border border-slate-200">
       <div ref={container} className={`w-full ${className}`} />
-      {!tilesEnabled ? (
+      {styleFailed ? (
         <p className="absolute inset-x-0 bottom-0 bg-amber-50/95 px-3 py-2 text-xs text-amber-800">
-          No basemap: set <code className="font-mono">BARIKOI_API_KEY</code> on the server to draw
-          streets. Pins and locations still work.
+          Couldn&apos;t load the basemap — check your connection. Pins, notes and distances all
+          still work.
         </p>
       ) : null}
     </div>

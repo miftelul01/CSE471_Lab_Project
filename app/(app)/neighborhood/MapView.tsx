@@ -29,12 +29,12 @@ export function MapView({
   pin,
   placed,
   online,
-  tilesEnabled,
+  styleUrl,
 }: {
   pin: Coords | null;
   placed: BookmarkView[];
   online: BookmarkView[];
-  tilesEnabled: boolean;
+  styleUrl: string;
 }) {
   const [active, setActive] = useState<Set<BookmarkCategory>>(new Set());
   // Long-press drops a pin here and the add form picks it up, which is how a
@@ -109,7 +109,7 @@ export function MapView({
 
       <HouseMap
         pin={pin}
-        tilesEnabled={tilesEnabled}
+        styleUrl={styleUrl}
         onLongPress={setDraftPin}
         draftPin={draftPin}
         markers={mappable.map((view) => ({

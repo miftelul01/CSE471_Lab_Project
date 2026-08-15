@@ -3,7 +3,7 @@ import Link from "next/link";
 import { MapView } from "../MapView";
 import { EmptyState, PageHeader, secondaryButtonClass } from "@/components/ui";
 import { getActiveHouseId, requireUser } from "@/lib/auth";
-import { hasTileProvider } from "@/lib/mapProviders";
+import { mapStyleUrl } from "@/lib/mapProviders";
 import { listBookmarks } from "@/lib/neighborhood.server";
 
 export const metadata = { title: "House map — Smart Mess" };
@@ -49,7 +49,7 @@ export default async function HouseMapPage() {
         pin={list.pin}
         placed={list.placed}
         online={list.online}
-        tilesEnabled={hasTileProvider()}
+        styleUrl={mapStyleUrl()}
       />
     </div>
   );

@@ -52,8 +52,13 @@ export const GET = withUser(async (user, req: Request, { params }: Params) => {
     );
   }
 
-  const path = segments.join("/");
-  const isStyle = path === TILE_STYLE_PATH;
+  // The client always asks for "style.json" and this route maps it onto
+  // whatever path the configured provider actually serves. Keeping the
+  // client-facing URL stable means the browser never has to know which
+  // provider is in use, or that there is a choice.
+  const requested = segments.join("/");
+  const isStyle = requested === "style.json" || requested === TILE_STYLE_PATH;
+  const path = isStyle ? TILE_STYLE_PATH : requested;
 
   await enforceRateLimit(user.id, "tiles");
 
