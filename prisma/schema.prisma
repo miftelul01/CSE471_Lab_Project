@@ -1,0 +1,1380 @@
+// Smart Mess & Property Management System — database schema.
+//
+// Columns and tables are mapped to snake_case with @map/@@map so raw SQL
+// (the triggers in prisma/migrations/*/migration.sql) stays readable, while
+// TypeScript keeps idiomatic camelCase.
+//
+//   npx prisma migrate dev --name <what-you-changed>   apply a schema change
+//   npx prisma generate                                refresh the typed client
+//   npx prisma studio                                  browse the data
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Pooled connection, used by the app at runtime.
+  url       = env("DATABASE_URL")
+  // Direct (unpooled) connection. Migrations need this because a pooler
+  // can't run the DDL and advisory locks Prisma Migrate relies on.
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  RESIDENT
+  LANDLORD
+  ADMIN
+}
+
+enum MembershipStatus {
+  ACTIVE
+  PENDING
+  LEFT
+}
+
+enum SleepSchedule {
+  EARLY_BIRD
+  NIGHT_OWL
+  FLEXIBLE
+}
+
+enum RoomType {
+  SINGLE
+  SHARED
+  MASTER
+  SEAT
+  ENTIRE_FLAT
+}
+
+/// PENDING -> ACCEPTED / REJECTED / CANCELLED (sender-initiated) / EXPIRED
+/// (system, 14 days unanswered). Shared by JoinRequest and RoommateApplication.
+enum JoinRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+/// Importance a resident assigns to one factor of their matching profile.
+/// MUST_HAVE is a hard dealbreaker, not just a heavier weight — see
+/// computeCompatibilityScore in lib/matching.ts.
+enum PreferenceWeight {
+  MUST_HAVE
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum GuestPolicy {
+  RARELY
+  OCCASIONALLY
+  FREQUENTLY
+}
+
+/// Admin-reviewed self-attestation (phone / university ID), not a live
+/// SMS/ID-provider integration — see VerificationRequest.
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ReportTargetType {
+  USER
+  LISTING
+  ROOMMATE_POST
+}
+
+enum ReportStatus {
+  OPEN
+  DISMISSED
+  ACTIONED
+}
+
+/// Moderation state, applied by a system administrator.
+enum PostStatus {
+  PUBLISHED
+  REMOVED
+}
+
+enum GuestStatus {
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+}
+
+enum SplitMethod {
+  EQUAL
+  CUSTOM
+  SHARES
+}
+
+enum ExpenseCategory {
+  RENT
+  UTILITIES
+  GROCERIES
+  MAINTENANCE
+  OTHER
+}
+
+enum ShareStatus {
+  PENDING
+  PAID
+  WAIVED
+}
+
+enum ProposalStatus {
+  DRAFT
+  OPEN
+  APPROVED
+  REJECTED
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+}
+
+enum AttendanceStatus {
+  ATTENDING
+  SKIPPING
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum PaymentProvider {
+  BKASH
+  STRIPE
+  CASH
+  MANUAL
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum ChoreFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum ChoreAssignmentStatus {
+  PENDING
+  COMPLETED
+  MISSED
+}
+
+enum DisputeState {
+  RAISED
+  VOTING
+  RESOLVED
+  ESCALATED
+  ARCHIVED
+}
+
+enum DisputeVoteValue {
+  FOR
+  AGAINST
+  ABSTAIN
+}
+
+/// Whether an account may sign in at all.
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+/// M2.4 — a closed vocabulary for the places a household needs.
+///
+/// Deliberately an enum and not free text: the need finder's whole value is
+/// that "kacha bazar", "kacha bazaar", "কাঁচা বাজার" and "vegetable market" all
+/// land in one bucket. Free-text categories would fragment that on day one.
+enum BookmarkCategory {
+  KACHA_BAZAR
+  GROCERY
+  BUTCHER
+  FISH
+  PHARMACY
+  BARBER
+  TAILOR
+  LAUNDRY
+  HARDWARE
+  ACCESSORIES
+  GAS_CYLINDER
+  WATER
+  RESTAURANT
+  ATM
+  TRANSPORT
+  SERVICE
+  OTHER
+}
+
+/// HOUSE entries belong to the household and outlive any single resident.
+/// PRIVATE ones are visible only to whoever added them.
+enum Visibility {
+  HOUSE
+  PRIVATE
+}
+
+enum Verdict {
+  STILL_THERE
+  GONE
+}
+
+enum DealStatus {
+  ACTIVE
+  EXPIRING_SOON
+  EXPIRED
+  RETIRED
+  ARCHIVED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth (NextAuth / Auth.js — field names here are fixed by the Prisma adapter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  // NextAuth uses `name` and `image`; for us they're the full name and avatar.
+  name          String    @default("")
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+
+  // Set only for email/password sign-ups. Google users have none, which is
+  // why the credentials provider must reject a null hash rather than compare.
+  passwordHash String? @map("password_hash")
+
+  role                  UserRole      @default(RESIDENT)
+  status                AccountStatus @default(ACTIVE)
+  suspendedReason       String?       @map("suspended_reason")
+  phone                 String?
+  emergencyContactName  String?       @map("emergency_contact_name")
+  emergencyContactPhone String?       @map("emergency_contact_phone")
+
+  /// Cumulative penalty from upheld post-move-in profile complaints (Mess
+  /// Court). Dampens this user's future compatibility scores. See
+  /// lib/matching.ts and app/api/admin/disputes/uphold/route.ts.
+  matchRatingPenalty Int @default(0) @map("match_rating_penalty")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accounts Account[]
+  sessions Session[]
+
+  housesOwned          House[]                  @relation("HouseLandlord")
+  memberships          HouseMember[]
+  listings             Listing[]
+  listingsRemoved      Listing[]                @relation("ListingRemovedBy")
+  preference           Preference?
+  matches              Match[]
+  favorites            Favorite[]
+  joinRequests         JoinRequest[]
+  guestLogs            GuestLog[]
+  expensesCreated      Expense[]                @relation("ExpenseCreator")
+  expensesPaid         Expense[]                @relation("ExpensePayer")
+  expenseShares        ExpenseShare[]
+  expenseShareEvents   ExpenseShareEvent[]
+  menuProposals        MenuProposal[]
+  menuVotes            MenuVote[]
+  mealAttendance       MealAttendance[]
+  ticketsReported      MaintenanceTicket[]      @relation("TicketReporter")
+  ticketsAssigned      MaintenanceTicket[]      @relation("TicketAssignee")
+  ticketEvents         MaintenanceTicketEvent[]
+  payments             Payment[]
+  choreAssignments     ChoreAssignment[]
+  disputesRaised       Dispute[]                @relation("DisputeRaiser")
+  disputesAgainst      Dispute[]                @relation("DisputeSubject")
+  disputeVotes         DisputeVote[]
+  disputeEvents        DisputeEvent[]
+  googleCredential     GoogleCredential?
+  settingsUpdated      PlatformSetting[]
+  roommatePosts        RoommatePost[]           @relation("RoommatePoster")
+  roommateApplications RoommateApplication[]
+  roommatePostsRemoved RoommatePost[]           @relation("RoommatePostModerator")
+  bookmarksAdded       Bookmark[]
+  bookmarkNotes        BookmarkNote[]
+  confirmations        Confirmation[]
+  dealsPosted          Deal[]
+  dealReports          DealReport[]
+  houseMapPinsSet      House[]                  @relation("HouseMapPinSetter")
+
+  matchRequestsSent     RoommateMatchRequest[] @relation("MatchRequestSender")
+  matchRequestsReceived RoommateMatchRequest[] @relation("MatchRequestReceiver")
+  messagesSent          Message[]              @relation("MessageSender")
+  messagesReceived      Message[]              @relation("MessageRecipient")
+  blocksMade            UserBlock[]            @relation("Blocker")
+  blocksReceived        UserBlock[]            @relation("Blocked")
+  reportsFiled          Report[]               @relation("Reporter")
+  verificationRequests  VerificationRequest[]  @relation("VerificationSubject")
+  verificationsReviewed VerificationRequest[]  @relation("VerificationReviewer")
+
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Common workflows — houses and membership
+// ─────────────────────────────────────────────────────────────────────────────
+
+model House {
+  id            String    @id @default(uuid())
+  name          String
+  address       String
+  area          String?
+  /// The house origin point — every distance and route in M2.4 is measured
+  /// from here. Seeded from the Module 1 listing coordinates when the house
+  /// came from a listing, otherwise dropped by the house admin during setup.
+  ///
+  /// These are the same two columns the rest of the app already used for "where
+  /// the house is"; M2.4 deliberately does not add a second pair. Two coordinate
+  /// columns for one building would eventually disagree, and there is no honest
+  /// way to decide which one a distance should be measured from.
+  latitude      Float?
+  longitude     Float?
+  /// Stamped when a human deliberately confirmed the pin, which is not the same
+  /// as coordinates merely existing: a listing's lat/lng may point at the
+  /// building's street rather than its gate. Until this is set, M2.4 keeps
+  /// distance and routing switched off and asks the admin to place the pin.
+  mapPinSetAt   DateTime? @map("map_pin_set_at")
+  mapPinSetById String?   @map("map_pin_set_by")
+
+  landlordId       String?  @map("landlord_id")
+  googleCalendarId String?  @map("google_calendar_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  landlord    User? @relation("HouseLandlord", fields: [landlordId], references: [id], onDelete: SetNull)
+  mapPinSetBy User? @relation("HouseMapPinSetter", fields: [mapPinSetById], references: [id], onDelete: SetNull)
+
+  members        HouseMember[]
+  listings       Listing[]
+  roommatePosts  RoommatePost[]
+  guestLogs      GuestLog[]
+  expenses       Expense[]
+  menuProposals  MenuProposal[]
+  meals          Meal[]
+  tickets        MaintenanceTicket[]
+  payments       Payment[]
+  chores         Chore[]
+  disputes       Dispute[]
+  calendarEvents CalendarEvent[]
+  bookmarks      Bookmark[]
+
+  @@index([landlordId])
+  @@map("houses")
+}
+
+model HouseMember {
+  id           String           @id @default(uuid())
+  houseId      String           @map("house_id")
+  userId       String           @map("user_id")
+  role         UserRole         @default(RESIDENT)
+  isHouseAdmin Boolean          @default(false) @map("is_house_admin")
+  status       MembershipStatus @default(ACTIVE)
+  joinedAt     DateTime         @default(now()) @map("joined_at")
+  /// When the membership ended. M2.4 needs the date, not just the LEFT status:
+  /// a departing resident's PRIVATE bookmarks are purged 14 days after they
+  /// go, and "14 days after what" has to be answerable.
+  leftAt       DateTime?        @map("left_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([houseId, userId])
+  @@index([userId])
+  @@index([houseId])
+  @@map("house_members")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1.1 Property & Room Listing Engine — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Listing {
+  id            String            @id @default(uuid())
+  landlordId    String            @map("landlord_id")
+  houseId       String?           @map("house_id")
+  title         String
+  description   String            @default("")
+  rent          Decimal           @db.Decimal(10, 2)
+  area          String
+  address       String?
+  roomType      RoomType          @default(SINGLE) @map("room_type")
+  capacity      Int               @default(1)
+  amenities     String[]          @default([])
+  latitude      Float?
+  longitude     Float?
+  isActive      Boolean           @default(true) @map("is_active")
+  /// Moderation is separate from isActive: a landlord delists their own room,
+  /// a system administrator removes one that breaks the rules.
+  status        PostStatus        @default(PUBLISHED)
+  removedReason String?           @map("removed_reason")
+  removedAt     DateTime?         @map("removed_at")
+  removedById   String?           @map("removed_by")
+  sleepSchedule SleepSchedule?    @map("sleep_schedule")
+  /// 1 (relaxed) - 5 (very tidy) — same scale as Preference.cleanlinessLevel
+  /// so the matching engine compares like-for-like.
+  cleanlinessLevel Int?           @map("cleanliness_level")
+  allowsSmoking Boolean?          @map("allows_smoking")
+  allowsPets    Boolean?          @map("allows_pets")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  landlord  User   @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+  house     House? @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  removedBy User?  @relation("ListingRemovedBy", fields: [removedById], references: [id], onDelete: SetNull)
+
+  matches      Match[]
+  favorites    Favorite[]
+  joinRequests JoinRequest[]
+  messages     Message[]
+
+  @@index([landlordId])
+  @@index([houseId])
+  @@index([area])
+  @@index([rent])
+  @@map("listings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1.2 Smart Roommate & House Matching — Mahia Tanzin
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Preference {
+  userId        String           @id @map("user_id")
+  budgetMin     Decimal          @map("budget_min") @db.Decimal(10, 2)
+  budgetMax     Decimal          @map("budget_max") @db.Decimal(10, 2)
+  sleepSchedule SleepSchedule    @map("sleep_schedule")
+  /// 1 (relaxed) - 5 (very tidy).
+  cleanlinessLevel Int           @map("cleanliness_level")
+  /// 1 (needs quiet) - 5 (tolerates a lot of noise).
+  noiseTolerance   Int           @map("noise_tolerance")
+  guestPolicy   GuestPolicy      @default(OCCASIONALLY) @map("guest_policy")
+  smokingOk     Boolean          @default(false) @map("smoking_ok")
+  petsOk        Boolean          @default(false) @map("pets_ok")
+  preferredArea String?          @map("preferred_area")
+
+  // Custom Preference Weighting — importance the resident assigns to each
+  // factor, so scoring reflects personal dealbreakers rather than a flat
+  // average. See lib/matching.ts computeCompatibilityScore.
+  budgetWeight      PreferenceWeight @default(MEDIUM) @map("budget_weight")
+  sleepWeight       PreferenceWeight @default(MEDIUM) @map("sleep_weight")
+  cleanlinessWeight PreferenceWeight @default(MEDIUM) @map("cleanliness_weight")
+  noiseWeight       PreferenceWeight @default(MEDIUM) @map("noise_weight")
+  guestWeight       PreferenceWeight @default(MEDIUM) @map("guest_weight")
+  smokingWeight     PreferenceWeight @default(MEDIUM) @map("smoking_weight")
+  petsWeight        PreferenceWeight @default(MEDIUM) @map("pets_weight")
+
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("preferences")
+}
+
+model Match {
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  listingId          String   @map("listing_id")
+  compatibilityScore Decimal  @map("compatibility_score") @db.Decimal(4, 3)
+  rank               Int
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@index([userId, rank])
+  @@map("matches")
+}
+
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  listingId String   @map("listing_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@map("favorites")
+}
+
+model JoinRequest {
+  id        String            @id @default(uuid())
+  userId    String            @map("user_id")
+  listingId String            @map("listing_id")
+  status    JoinRequestStatus @default(PENDING)
+  message   String?
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@map("join_requests")
+}
+
+/// User<->User equivalent of JoinRequest — matching a person directly with
+/// another person, not with a listing. Accepting just unlocks contact info
+/// and messaging between the two; it does not create a house on its own —
+/// the pair still applies to a listing through the normal JoinRequest flow.
+model RoommateMatchRequest {
+  id         String            @id @default(uuid())
+  senderId   String            @map("sender_id")
+  receiverId String            @map("receiver_id")
+  status     JoinRequestStatus @default(PENDING)
+  message    String?
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  sender   User @relation("MatchRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("MatchRequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  // One open (PENDING) request per direction — enforced by a partial unique
+  // index in migration.sql, same pattern as join_requests_one_open_per_listing.
+  // A plain @@unique here would permanently block a resend after the pair's
+  // first request resolves to CANCELLED/REJECTED/EXPIRED.
+  @@index([receiverId])
+  @@map("roommate_match_requests")
+}
+
+/// Lightweight pre-request chat between two users, optionally scoped to the
+/// listing/roommate-post the conversation is about.
+model Message {
+  id          String    @id @default(uuid())
+  senderId    String    @map("sender_id")
+  recipientId String    @map("recipient_id")
+  listingId   String?   @map("listing_id")
+  body        String
+  createdAt   DateTime  @default(now()) @map("created_at")
+  readAt      DateTime? @map("read_at")
+
+  sender    User    @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User    @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  listing   Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  @@index([senderId, recipientId, createdAt])
+  @@index([recipientId, readAt])
+  @@map("messages")
+}
+
+/// A blocks B: B disappears from A's matching feeds and vice versa.
+model UserBlock {
+  id        String   @id @default(uuid())
+  blockerId String   @map("blocker_id")
+  blockedId String   @map("blocked_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@map("user_blocks")
+}
+
+model Report {
+  id         String            @id @default(uuid())
+  reporterId String            @map("reporter_id")
+  targetType ReportTargetType  @map("target_type")
+  targetId   String            @map("target_id")
+  reason     String
+  status     ReportStatus      @default(OPEN)
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("reports")
+}
+
+/// Admin-reviewed verification (phone / university ID) backing the "Verified"
+/// badge — a self-attestation with a human review trail, not a live
+/// SMS/ID-provider integration. Latest VERIFIED row for a user = badge shown.
+model VerificationRequest {
+  id           String              @id @default(uuid())
+  userId       String              @map("user_id")
+  phone        String?
+  note         String?
+  status       VerificationStatus  @default(PENDING)
+  reviewedById String?             @map("reviewed_by")
+  reviewedAt   DateTime?           @map("reviewed_at")
+  createdAt    DateTime            @default(now()) @map("created_at")
+
+  user       User  @relation("VerificationSubject", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("VerificationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@map("verification_requests")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1.3 Guest Registration & Accountability Log — Md. Mahidul Alam Araf
+// ─────────────────────────────────────────────────────────────────────────────
+
+model GuestLog {
+  id               String      @id @default(uuid())
+  houseId          String      @map("house_id")
+  hostUserId       String      @map("host_user_id")
+  guestName        String      @map("guest_name")
+  guestPhone       String?     @map("guest_phone")
+  purpose          String?
+  expectedCheckOut DateTime?   @map("expected_check_out")
+  checkedInAt      DateTime    @default(now()) @map("checked_in_at")
+  checkedOutAt     DateTime?   @map("checked_out_at")
+  status           GuestStatus @default(CHECKED_IN)
+  notifiedAdminAt  DateTime?   @map("notified_admin_at")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  host  User  @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@index([houseId, checkedInAt(sort: Desc)])
+  @@map("guest_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.1 Shared Wallet & Bill-Splitting — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Expense {
+  id          String          @id @default(uuid())
+  houseId     String          @map("house_id")
+  createdById String          @map("created_by")
+  /// Who actually put the money down, which is not always who typed it in —
+  /// "Tanvir paid the electricity, Nusrat logged it" has to be expressible or
+  /// the ledger cannot say who the house owes.
+  ///
+  /// Nullable on purpose. An expense generated by the system rather than paid
+  /// out of somebody's pocket (a meal costed against the mess, for instance)
+  /// genuinely has no payer, and inventing one would fabricate a debt owed to
+  /// a real person. Such rows still split into shares; they just take no part
+  /// in "who owes whom".
+  paidById    String?         @map("paid_by")
+  /// Set when M2.3 generated this expense from a meal, so attendance changes
+  /// can find their own row. Previously this link was a "MEAL:<id>" string
+  /// stuffed into `description` — a free-text column any resident can type
+  /// into, with no index and no referential integrity.
+  mealId      String?         @unique @map("meal_id")
+  title       String
+  description String?
+  amount      Decimal         @db.Decimal(12, 2)
+  category    ExpenseCategory @default(OTHER)
+  splitMethod SplitMethod     @default(EQUAL) @map("split_method")
+  spentOn     DateTime        @default(now()) @map("spent_on") @db.Date
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  house     House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  createdBy User  @relation("ExpenseCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  paidBy    User? @relation("ExpensePayer", fields: [paidById], references: [id], onDelete: SetNull)
+  // SetNull rather than Cascade: if the meal slot is removed, the money that
+  // was already charged for it must not vanish with it.
+  meal      Meal? @relation(fields: [mealId], references: [id], onDelete: SetNull)
+
+  shares ExpenseShare[]
+
+  @@index([houseId, spentOn(sort: Desc)])
+  @@index([paidById])
+  @@map("expenses")
+}
+
+model ExpenseShare {
+  id        String      @id @default(uuid())
+  expenseId String      @map("expense_id")
+  userId    String      @map("user_id")
+  amount    Decimal     @db.Decimal(12, 2)
+  status    ShareStatus @default(PENDING)
+  settledAt DateTime?   @map("settled_at")
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  payments Payment[]
+  events   ExpenseShareEvent[]
+
+  @@unique([expenseId, userId])
+  @@index([userId, status])
+  @@map("expense_shares")
+}
+
+/**
+ * Who moved a ledger row, when, and from what.
+ * "I marked it paid" / "no you didn't" is exactly the argument Mess Court
+ * exists to arbitrate, and it cannot be settled from a status column that only
+ * remembers its current value. Written both by the settle endpoint and by the
+ * payment trigger, so a gateway settlement leaves the same trail a manual one
+ * does.
+ */
+model ExpenseShareEvent {
+  id         String       @id @default(uuid())
+  shareId    String       @map("share_id")
+  actorId    String?      @map("actor_id")
+  fromStatus ShareStatus? @map("from_status")
+  toStatus   ShareStatus  @map("to_status")
+  note       String?
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  share ExpenseShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  actor User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([shareId, createdAt])
+  @@map("expense_share_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.2 Weekly Menu Proposal & Voting — Mahia Tanzin
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MenuProposal {
+  id             String         @id @default(uuid())
+  houseId        String         @map("house_id")
+  proposedById   String         @map("proposed_by")
+  title          String
+  weekStartDate  DateTime       @map("week_start_date") @db.Date
+  status         ProposalStatus @default(OPEN)
+  votingClosesAt DateTime?      @map("voting_closes_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  house      House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  proposedBy User  @relation(fields: [proposedById], references: [id], onDelete: Cascade)
+
+  items MenuProposalItem[]
+  votes MenuVote[]
+  meals Meal[]
+
+  @@index([houseId, weekStartDate(sort: Desc)])
+  @@map("menu_proposals")
+}
+
+model MenuProposalItem {
+  id          String   @id @default(uuid())
+  proposalId  String   @map("proposal_id")
+  dayOfWeek   Int      @map("day_of_week") @db.SmallInt
+  mealType    MealType @map("meal_type")
+  description String
+
+  proposal MenuProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, dayOfWeek, mealType])
+  @@map("menu_proposal_items")
+}
+
+model MenuVote {
+  id         String   @id @default(uuid())
+  proposalId String   @map("proposal_id")
+  userId     String   @map("user_id")
+  vote       Int      @db.SmallInt
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  proposal MenuProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, userId])
+  @@map("menu_votes")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.3 Meal Attendance & Auto-Quantity — Md. Mahidul Alam Araf
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Meal {
+  id             String    @id @default(uuid())
+  houseId        String    @map("house_id")
+  mealDate       DateTime  @map("meal_date") @db.Date
+  mealType       MealType  @map("meal_type")
+  menuProposalId String?   @map("menu_proposal_id")
+  costPerHead    Decimal?  @map("cost_per_head") @db.Decimal(10, 2)
+  headcount      Int       @default(0)
+  locksAt        DateTime? @map("locks_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  house        House         @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  menuProposal MenuProposal? @relation(fields: [menuProposalId], references: [id], onDelete: SetNull)
+
+  attendance MealAttendance[]
+  expense    Expense?
+
+  @@unique([houseId, mealDate, mealType])
+  @@index([houseId, mealDate(sort: Desc)])
+  @@map("meals")
+}
+
+model MealAttendance {
+  id        String           @id @default(uuid())
+  mealId    String           @map("meal_id")
+  userId    String           @map("user_id")
+  status    AttendanceStatus @default(ATTENDING)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  meal Meal @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([mealId, userId])
+  @@map("meal_attendance")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.4 Shared House Map & Neighbourhood Knowledge Base — Miftelul Mehebub
+//
+// The household's own map of the neighbourhood: where the good kacha bazar is,
+// which pharmacy stays open late, who delivers gas cylinders. A resident who
+// joins inherits the whole thing at once instead of asking the same questions
+// every new tenant has asked before them.
+//
+// Places and time-bound offers are separate tables on purpose. A shop is a
+// durable fact about the neighbourhood; "20% off until Friday" is an event with
+// its own lifecycle. Folding the second into the first would mean either
+// expiring the shop along with its offer or keeping stale discounts on screen
+// forever.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A place the house cares about.
+///
+/// `addedByName` is a snapshot, not a join. Attribution has to survive the
+/// resident leaving or their account being deleted — a note that says "added by
+/// someone, we don't know who" is worth less than one that still says Tanvir,
+/// even after Tanvir moves out. Hence `addedById` SetNull beside a frozen name.
+model Bookmark {
+  id         String           @id @default(uuid())
+  houseId    String           @map("house_id")
+  name       String
+  category   BookmarkCategory
+  /// HOUSE by default: the point of the feature is the shared map. PRIVATE is
+  /// the exception for something only one resident wants remembered.
+  visibility Visibility       @default(HOUSE)
+
+  /// Null for online-only and delivery entries, which have no place on a map
+  /// and never enter distance ranking.
+  latitude        Float?
+  longitude       Float?
+  /// The provider's id for this place. Unique per house, which is what makes
+  /// "someone already pinned this" a hard reject rather than a guess.
+  externalPlaceId String? @map("external_place_id")
+  address         String?
+  isOnline        Boolean @default(false) @map("is_online")
+  onlineUrl       String? @map("online_url")
+
+  /// Last time a resident other than the author said it was still there.
+  lastConfirmedAt DateTime? @map("last_confirmed_at")
+
+  addedById   String? @map("added_by")
+  addedByName String  @map("added_by_name")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  /// Soft delete. A shop reported gone by mistake is recoverable for 30 days;
+  /// a hard delete would take the house's notes with it.
+  deletedAt DateTime? @map("deleted_at")
+
+  house   House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  addedBy User? @relation(fields: [addedById], references: [id], onDelete: SetNull)
+
+  notes         BookmarkNote[]
+  confirmations Confirmation[]
+  deals         Deal[]
+
+  /// The hard half of deduplication: one house cannot pin the same provider
+  /// place twice. Postgres treats NULLs as distinct, so the many bookmarks with
+  /// no provider id (typed in by hand) are unaffected. Soft-deleted rows stay
+  /// covered on purpose — otherwise re-adding a removed place would collide
+  /// with the original when an admin restores it inside its 30-day window.
+  @@unique([houseId, externalPlaceId])
+  @@index([houseId, category, visibility])
+  @@index([houseId, deletedAt])
+  @@map("bookmarks")
+}
+
+/// The house's own annotation on a place — "ask for Rafiq", "closes 2-4pm",
+/// "the ilish is only fresh on Fridays". This is the knowledge half of the
+/// knowledge base and the reason the map beats a web search.
+model BookmarkNote {
+  id         String    @id @default(uuid())
+  bookmarkId String    @map("bookmark_id")
+  body       String
+  authorId   String?   @map("author_id")
+  authorName String    @map("author_name")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([bookmarkId, createdAt(sort: Desc)])
+  @@map("bookmark_notes")
+}
+
+/// One resident's verdict on whether a place is still there.
+///
+/// Kept as an append-only log rather than a counter on Bookmark, because the
+/// 24-hour rate limit and the "distinct residents" threshold are both questions
+/// about history that a single integer cannot answer.
+model Confirmation {
+  id         String   @id @default(uuid())
+  bookmarkId String   @map("bookmark_id")
+  residentId String   @map("resident_id")
+  verdict    Verdict
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  resident User     @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([bookmarkId, residentId, createdAt])
+  @@map("confirmations")
+}
+
+/// A time-bound offer attached to a place — an optional layer over the map,
+/// never a replacement for it.
+model Deal {
+  id           String  @id @default(uuid())
+  bookmarkId   String  @map("bookmark_id")
+  title        String
+  description  String?
+  discountNote String? @map("discount_note")
+
+  validFrom  DateTime  @default(now()) @map("valid_from")
+  /// Null means open-ended — a standing "10% for regulars" arrangement with no
+  /// end date. Those decay on confirmation age instead of on a clock.
+  validUntil DateTime? @map("valid_until")
+
+  /// A COPY of what the read-time derivation would return, refreshed nightly.
+  /// It exists so status can be filtered and indexed in SQL, and for no other
+  /// reason: every screen derives the status it displays. If the cron never
+  /// runs, this column goes stale and nothing a resident sees is wrong.
+  cachedStatus DealStatus @default(ACTIVE) @map("cached_status")
+
+  postedById      String?   @map("posted_by")
+  postedByName    String    @map("posted_by_name")
+  /// Someone confirmed the offer is genuinely still honoured.
+  lastConfirmedAt DateTime? @map("last_confirmed_at")
+  /// Set when the poster or an admin pulls the offer before it lapses.
+  retiredAt       DateTime? @map("retired_at")
+  /// Set when the parent bookmark is soft-deleted. Separate from retiredAt so
+  /// restoring the place brings its offers back in the state they were in.
+  deletedAt       DateTime? @map("deleted_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  postedBy User?    @relation(fields: [postedById], references: [id], onDelete: SetNull)
+
+  reports DealReport[]
+
+  @@index([bookmarkId, validUntil])
+  @@index([cachedStatus, validUntil])
+  @@map("deals")
+}
+
+model DealReport {
+  id           String   @id @default(uuid())
+  dealId       String   @map("deal_id")
+  reportedById String   @map("reported_by")
+  verdict      Verdict
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  deal       Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  reportedBy User @relation(fields: [reportedById], references: [id], onDelete: Cascade)
+
+  @@index([dealId, reportedById, createdAt])
+  @@map("deal_reports")
+}
+
+/// Responses from the paid map providers, keyed by exactly what was asked.
+///
+/// Not a nicety — it is the quota. Autocomplete is the largest call risk in the
+/// feature, and a house of six people all typing "bazar" must cost one upstream
+/// request a day, not six hundred. Kept in Postgres rather than in a module
+/// -level Map because every serverless instance starts with an empty heap, so
+/// an in-process cache would miss nearly every time.
+model MapApiCache {
+  key       String   @id
+  payload   Json
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("map_api_cache")
+}
+
+/// One row per upstream-facing request, for the 60-per-hour-per-resident limit.
+/// Only calls that could reach a provider are logged; cache hits are free.
+model MapApiCall {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  route     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("map_api_calls")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.1 Maintenance Ticket System — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MaintenanceTicket {
+  id           String         @id @default(uuid())
+  houseId      String         @map("house_id")
+  reportedById String         @map("reported_by")
+  assignedToId String?        @map("assigned_to")
+  title        String
+  description  String         @default("")
+  category     String?
+  status       TicketStatus   @default(OPEN)
+  priority     TicketPriority @default(MEDIUM)
+  photoUrl     String?        @map("photo_url")
+  resolvedAt   DateTime?      @map("resolved_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  house      House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  reportedBy User  @relation("TicketReporter", fields: [reportedById], references: [id], onDelete: Cascade)
+  assignedTo User? @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  events MaintenanceTicketEvent[]
+
+  @@index([houseId, createdAt(sort: Desc)])
+  @@map("maintenance_tickets")
+}
+
+model MaintenanceTicketEvent {
+  id         String        @id @default(uuid())
+  ticketId   String        @map("ticket_id")
+  actorId    String?       @map("actor_id")
+  fromStatus TicketStatus? @map("from_status")
+  toStatus   TicketStatus  @map("to_status")
+  note       String?
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  ticket MaintenanceTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User?             @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("maintenance_ticket_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.2 Payment Integration (bKash / Stripe) — Miftelul Mehebub
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Payment {
+  id                String          @id @default(uuid())
+  userId            String          @map("user_id")
+  houseId           String?         @map("house_id")
+  expenseShareId    String?         @map("expense_share_id")
+  provider          PaymentProvider
+  status            PaymentStatus   @default(INITIATED)
+  amount            Decimal         @db.Decimal(12, 2)
+  currency          String          @default("BDT")
+  providerPaymentId String?         @map("provider_payment_id")
+  providerPayload   Json?           @map("provider_payload")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  house        House?        @relation(fields: [houseId], references: [id], onDelete: SetNull)
+  expenseShare ExpenseShare? @relation(fields: [expenseShareId], references: [id], onDelete: SetNull)
+
+  // Idempotency: a gateway retrying its webhook must not create a second row.
+  @@unique([provider, providerPaymentId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.4 Automated Chore Rotation (Google Tasks) — Mahia Tanzin
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Chore {
+  id                String         @id @default(uuid())
+  houseId           String         @map("house_id")
+  name              String
+  description       String?
+  frequency         ChoreFrequency @default(WEEKLY)
+  // Ordered rotation ring of user ids.
+  rotationOrder     String[]       @default([]) @map("rotation_order")
+  // Cursor into rotationOrder; -1 means nobody assigned yet.
+  lastAssignedIndex Int            @default(-1) @map("last_assigned_index")
+  isActive          Boolean        @default(true) @map("is_active")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  house       House             @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  assignments ChoreAssignment[]
+
+  @@index([houseId])
+  @@map("chores")
+}
+
+model ChoreAssignment {
+  id           String                @id @default(uuid())
+  choreId      String                @map("chore_id")
+  userId       String                @map("user_id")
+  dueDate      DateTime              @map("due_date") @db.Date
+  status       ChoreAssignmentStatus @default(PENDING)
+  completedAt  DateTime?             @map("completed_at")
+  googleTaskId String?               @map("google_task_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+
+  chore Chore @relation(fields: [choreId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Running the rotation job twice for one period must not double-assign.
+  @@unique([choreId, dueDate])
+  @@index([userId, dueDate(sort: Desc)])
+  @@map("chore_assignments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.5 Mess Court (Conflict-Resolution State Machine) — Md. Mahidul Alam Araf
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Dispute {
+  id              String       @id @default(uuid())
+  houseId         String       @map("house_id")
+  raisedById      String       @map("raised_by")
+  againstUserId   String?      @map("against_user_id")
+  title           String
+  description     String       @default("")
+  category        String?
+  state           DisputeState @default(RAISED)
+  votingStartedAt DateTime?    @map("voting_started_at")
+  votingDeadline  DateTime?    @map("voting_deadline")
+  resolution      String?
+  resolvedAt      DateTime?    @map("resolved_at")
+  escalatedAt     DateTime?    @map("escalated_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  house       House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  raisedBy    User  @relation("DisputeRaiser", fields: [raisedById], references: [id], onDelete: Cascade)
+  againstUser User? @relation("DisputeSubject", fields: [againstUserId], references: [id], onDelete: SetNull)
+
+  votes  DisputeVote[]
+  events DisputeEvent[]
+
+  @@index([houseId, state])
+  @@index([votingDeadline])
+  @@map("disputes")
+}
+
+model DisputeVote {
+  id        String           @id @default(uuid())
+  disputeId String           @map("dispute_id")
+  userId    String           @map("user_id")
+  vote      DisputeVoteValue
+  comment   String?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  dispute Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([disputeId, userId])
+  @@map("dispute_votes")
+}
+
+model DisputeEvent {
+  id        String        @id @default(uuid())
+  disputeId String        @map("dispute_id")
+  actorId   String?       @map("actor_id")
+  fromState DisputeState? @map("from_state")
+  toState   DisputeState  @map("to_state")
+  note      String?
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  dispute Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([disputeId, createdAt])
+  @@map("dispute_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.4 / M3.6 Google integrations
+// ─────────────────────────────────────────────────────────────────────────────
+
+model GoogleCredential {
+  userId       String    @id @map("user_id")
+  accessToken  String?   @map("access_token")
+  refreshToken String?   @map("refresh_token")
+  expiresAt    DateTime? @map("expires_at")
+  scopes       String[]  @default([])
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("google_credentials")
+}
+
+model CalendarEvent {
+  id            String    @id @default(uuid())
+  houseId       String    @map("house_id")
+  // Which feature produced it: RENT_DUE | GUEST | DISPUTE | CHORE | MEAL
+  sourceType    String    @map("source_type")
+  sourceId      String?   @map("source_id")
+  title         String
+  description   String?
+  startsAt      DateTime  @map("starts_at")
+  endsAt        DateTime? @map("ends_at")
+  googleEventId String?   @map("google_event_id")
+  syncedAt      DateTime? @map("synced_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+
+  // Re-syncing updates the existing event instead of duplicating it.
+  @@unique([sourceType, sourceId])
+  @@index([houseId, startsAt])
+  @@map("calendar_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Roommate posts — a flat admin advertising a spare seat in a house they live
+// in. Deliberately separate from Listing: a landlord rents out a property to a
+// tenant, whereas this invites someone into an existing household. Different
+// author, different audience, different meaning when accepted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RoommatePost {
+  id             String            @id @default(uuid())
+  houseId        String            @map("house_id")
+  postedById     String            @map("posted_by")
+  title          String
+  description    String            @default("")
+  monthlyShare   Decimal           @map("monthly_share") @db.Decimal(10, 2)
+  seatsAvailable Int               @default(1) @map("seats_available")
+  availableFrom  DateTime?         @map("available_from") @db.Date
+  sleepSchedule  SleepSchedule?    @map("sleep_schedule")
+  cleanlinessLevel Int?            @map("cleanliness_level")
+  smokingOk      Boolean?          @map("smoking_ok")
+  petsOk         Boolean?          @map("pets_ok")
+  isActive       Boolean           @default(true) @map("is_active")
+  status         PostStatus        @default(PUBLISHED)
+  removedReason  String?           @map("removed_reason")
+  removedAt      DateTime?         @map("removed_at")
+  removedById    String?           @map("removed_by")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  house     House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  postedBy  User  @relation("RoommatePoster", fields: [postedById], references: [id], onDelete: Cascade)
+  removedBy User? @relation("RoommatePostModerator", fields: [removedById], references: [id], onDelete: SetNull)
+
+  applications RoommateApplication[]
+
+  @@index([houseId])
+  @@index([isActive, monthlyShare])
+  @@map("roommate_posts")
+}
+
+model RoommateApplication {
+  id        String            @id @default(uuid())
+  postId    String            @map("post_id")
+  userId    String            @map("user_id")
+  status    JoinRequestStatus @default(PENDING)
+  message   String?
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  post RoommatePost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("roommate_applications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Common workflow — admin activities
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  description String   @default("")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by")
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("platform_settings")
+}

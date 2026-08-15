@@ -4,8 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Card, ErrorNote, Field, buttonClass, inputClass } from "@/components/ui";
-import { CLEANLINESS_LEVELS, SLEEP_SCHEDULES } from "@/lib/listings";
-import type { CleanlinessLevel, SleepSchedule } from "@prisma/client";
+import { SLEEP_SCHEDULES } from "@/lib/listings";
+import type { SleepSchedule } from "@prisma/client";
 
 export function RoommatePostForm({
   houses,
@@ -21,7 +21,7 @@ export function RoommatePostForm({
     seatsAvailable: "1",
     availableFrom: "",
     sleepSchedule: "" as SleepSchedule | "",
-    cleanliness: "" as CleanlinessLevel | "",
+    cleanlinessLevel: "",
     smokingOk: false,
     petsOk: false,
   });
@@ -42,7 +42,7 @@ export function RoommatePostForm({
         seatsAvailable: Number(form.seatsAvailable),
         availableFrom: form.availableFrom || null,
         sleepSchedule: form.sleepSchedule || null,
-        cleanliness: form.cleanliness || null,
+        cleanlinessLevel: form.cleanlinessLevel ? Number(form.cleanlinessLevel) : null,
       }),
     });
     const body = await response.json();
@@ -147,18 +147,16 @@ export function RoommatePostForm({
             </select>
           </Field>
 
-          <Field label="Cleanliness">
+          <Field label="Cleanliness" hint="1 = relaxed, 5 = very tidy.">
             <select
               className={inputClass}
-              value={form.cleanliness}
-              onChange={(e) =>
-                setForm({ ...form, cleanliness: e.target.value as CleanlinessLevel | "" })
-              }
+              value={form.cleanlinessLevel}
+              onChange={(e) => setForm({ ...form, cleanlinessLevel: e.target.value })}
             >
               <option value="">No preference</option>
-              {CLEANLINESS_LEVELS.map((v) => (
+              {[1, 2, 3, 4, 5].map((v) => (
                 <option key={v} value={v}>
-                  {v.toLowerCase().replace("_", " ")}
+                  {v}
                 </option>
               ))}
             </select>
