@@ -69,14 +69,14 @@ export function BookmarkDetail({
   confirmations,
   deals,
   pin,
-  tilesEnabled,
+  styleUrl,
 }: {
   bookmark: DetailBookmark;
   notes: BookmarkNoteView[];
   confirmations: ConfirmationEntry[];
   deals: DealView[];
   pin: Coords | null;
-  tilesEnabled: boolean;
+  styleUrl: string;
 }) {
   const router = useRouter();
 
@@ -488,7 +488,7 @@ export function BookmarkDetail({
           {!bookmark.isOnline && bookmark.lat !== null && bookmark.lng !== null ? (
             <HouseMap
               pin={pin}
-              tilesEnabled={tilesEnabled}
+              styleUrl={styleUrl}
               routeGeometry={route?.geometry ?? null}
               markers={[
                 {

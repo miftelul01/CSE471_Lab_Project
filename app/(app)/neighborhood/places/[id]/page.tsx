@@ -5,7 +5,7 @@ import { BookmarkDetail } from "./BookmarkDetail";
 import { PageHeader, secondaryButtonClass } from "@/components/ui";
 import { getActiveHouseId, requireUser } from "@/lib/auth";
 import { bookmarkVisibilityFilter, isHouseAdmin } from "@/lib/authz";
-import { hasTileProvider } from "@/lib/mapProviders";
+import { mapStyleUrl } from "@/lib/mapProviders";
 import { CATEGORY_LABELS, freshness, haversineKm } from "@/lib/neighborhood";
 import { getHousePin, listDeals } from "@/lib/neighborhood.server";
 import { prisma } from "@/lib/prisma";
@@ -105,7 +105,7 @@ export default async function BookmarkPage({ params }: Params) {
         }))}
         deals={deals}
         pin={pin}
-        tilesEnabled={hasTileProvider()}
+        styleUrl={mapStyleUrl()}
       />
     </div>
   );

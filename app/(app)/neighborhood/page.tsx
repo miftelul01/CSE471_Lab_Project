@@ -6,7 +6,7 @@ import { RemovedPlaces } from "./RemovedPlaces";
 import { Badge, Card, EmptyState, PageHeader, secondaryButtonClass } from "@/components/ui";
 import { getActiveHouseId, requireUser } from "@/lib/auth";
 import { isHouseAdmin } from "@/lib/authz";
-import { hasTileProvider } from "@/lib/mapProviders";
+import { mapStyleUrl } from "@/lib/mapProviders";
 import { listBookmarks, getSuggestedPin, listDeals } from "@/lib/neighborhood.server";
 
 export const metadata = { title: "Neighbourhood — Smart Mess" };
@@ -77,7 +77,7 @@ export default async function NeighborhoodPage() {
         <HousePinSetup
           suggested={suggested}
           canSetPin={canManage}
-          tilesEnabled={hasTileProvider()}
+          styleUrl={mapStyleUrl()}
         />
       )}
 

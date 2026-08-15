@@ -23,11 +23,11 @@ import type { Coords } from "@/lib/neighborhood";
 export function HousePinSetup({
   suggested,
   canSetPin,
-  tilesEnabled,
+  styleUrl,
 }: {
   suggested: Coords | null;
   canSetPin: boolean;
-  tilesEnabled: boolean;
+  styleUrl: string;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState<Coords | null>(suggested);
@@ -98,7 +98,7 @@ export function HousePinSetup({
           pin={null}
           draftPin={draft}
           markers={[]}
-          tilesEnabled={tilesEnabled}
+          styleUrl={styleUrl}
           onLongPress={setDraft}
           className="h-80"
         />

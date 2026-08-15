@@ -44,12 +44,42 @@ export const TILE_UPSTREAM_BASE = process.env.BARIKOI_TILE_BASE ?? "https://map.
 /** Path of the style document within that host. */
 export const TILE_STYLE_PATH = process.env.BARIKOI_STYLE_PATH ?? "styles/osm-liberty/style.json";
 
+/**
+ * Keyless basemap, used when no Barikoi key is configured.
+ *
+ * OpenFreeMap serves OpenStreetMap-derived vector tiles with no key, no
+ * account and no quota, which makes it the honest default for a project that
+ * may be cloned and run by someone who has not signed up for anything. The
+ * map is fully functional on it; Barikoi is the upgrade, because its POI data
+ * goes down to house level in Bangladesh and OSM's does not.
+ */
+export const KEYLESS_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
+
+/** Keyless geocoder, same rationale — Komoot's Photon, an OSM autocomplete. */
+const PHOTON_URL = "https://photon.komoot.io/api/";
+
+/** Roughly central Dhaka, used to bias keyless search toward Bangladesh. */
+const DHAKA_BIAS = { lat: 23.8103, lng: 90.4125 };
+
 export const barikoiKey = () => process.env.BARIKOI_API_KEY ?? "";
 export const orsKey = () => process.env.OPENROUTESERVICE_API_KEY ?? "";
 
 export const hasTileProvider = () => barikoiKey().length > 0;
-export const hasSearchProvider = () => barikoiKey().length > 0;
-export const hasRoutingProvider = () => orsKey().length > 0 || barikoiKey().length > 0;
+export const hasRoutingProvider = () => orsKey().length > 0;
+
+/**
+ * Where the browser should fetch its MapLibre style from.
+ *
+ * With a Barikoi key: our own proxy route, because the real style document
+ * carries that key in every URL inside it and must never reach the browser.
+ *
+ * Without one: OpenFreeMap directly. The proxy exists to protect a credential,
+ * and here there is no credential to protect — routing a keyless public
+ * basemap through our own server would add a hop and a failure mode while
+ * defending nothing.
+ */
+export const mapStyleUrl = (): string =>
+  hasTileProvider() ? "/api/neighborhood/tiles/style.json" : KEYLESS_STYLE_URL;
 
 /* ── Cache ──────────────────────────────────────────────────────────────── */
 
@@ -193,6 +223,82 @@ function normalizePlaces(payload: unknown): PlaceSuggestion[] {
     .filter((place) => place.name.trim().length > 0);
 }
 
+async function searchViaBarikoi(query: string): Promise<PlaceSuggestion[]> {
+  const url = new URL(BARIKOI_AUTOCOMPLETE_URL);
+  url.searchParams.set("api_key", barikoiKey());
+  url.searchParams.set("q", query);
+
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) {
+    throw new HttpError(`Place search is unavailable right now (${response.status}).`, 503);
+  }
+  return normalizePlaces(await response.json());
+}
+
+type PhotonFeature = {
+  geometry?: { coordinates?: [number, number] };
+  properties?: {
+    name?: string;
+    street?: string;
+    housenumber?: string;
+    district?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    osm_id?: number;
+    osm_type?: string;
+  };
+};
+
+/**
+ * Keyless fallback search, biased toward Dhaka.
+ *
+ * Photon indexes OpenStreetMap, so it knows roads, landmarks and larger
+ * businesses but not the stall on the corner. That gap is exactly why the add
+ * form also accepts a typed name with a long-pressed pin — most of what a
+ * household actually relies on has never been in any gazetteer.
+ */
+async function searchViaPhoton(query: string): Promise<PlaceSuggestion[]> {
+  const url = new URL(PHOTON_URL);
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "8");
+  url.searchParams.set("lat", String(DHAKA_BIAS.lat));
+  url.searchParams.set("lon", String(DHAKA_BIAS.lng));
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      // Komoot asks that clients identify themselves on the free endpoint.
+      "User-Agent": "SmartMess/1.0 (CSE471 coursework project)",
+    },
+  });
+  if (!response.ok) {
+    throw new HttpError(`Place search is unavailable right now (${response.status}).`, 503);
+  }
+
+  const body = (await response.json()) as { features?: PhotonFeature[] };
+  return (body.features ?? [])
+    .map((feature): PlaceSuggestion => {
+      const props = feature.properties ?? {};
+      const coords = feature.geometry?.coordinates;
+      const address = [props.housenumber, props.street, props.district, props.city, props.state]
+        .filter(Boolean)
+        .join(", ");
+
+      return {
+        // Prefixed with the provider so the same house never gets one pin from
+        // Photon and a second, identical one from Barikoi later.
+        externalPlaceId:
+          props.osm_type && props.osm_id ? `photon:${props.osm_type}${props.osm_id}` : null,
+        name: props.name || props.street || address || "Unnamed place",
+        address: address || null,
+        lat: coords ? coords[1] : null,
+        lng: coords ? coords[0] : null,
+      };
+    })
+    .filter((place) => place.name.trim().length > 0);
+}
+
 /**
  * Place suggestions for a typed query, cached for 24 hours by the query string.
  *
@@ -213,25 +319,11 @@ export async function searchPlaces(
   const hit = await cacheGet<PlaceSuggestion[]>(key);
   if (hit) return { suggestions: hit, cached: true };
 
-  if (!hasSearchProvider()) {
-    throw new HttpError(
-      "Place search is not configured. Add BARIKOI_API_KEY to the server environment.",
-      503
-    );
-  }
-
   await enforceRateLimit(userId, "autocomplete");
 
-  const url = new URL(BARIKOI_AUTOCOMPLETE_URL);
-  url.searchParams.set("api_key", barikoiKey());
-  url.searchParams.set("q", trimmed);
-
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!response.ok) {
-    throw new HttpError(`Place search is unavailable right now (${response.status}).`, 503);
-  }
-
-  const suggestions = normalizePlaces(await response.json());
+  const suggestions = barikoiKey()
+    ? await searchViaBarikoi(trimmed)
+    : await searchViaPhoton(trimmed);
 
   // Cached even when empty: "no such place" is an answer, and re-asking it
   // every time somebody types the same typo is exactly the waste this exists
