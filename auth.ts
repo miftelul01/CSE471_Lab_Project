@@ -5,7 +5,7 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 
 import { prisma } from "@/lib/prisma";
-import type { UserRole } from "@prisma/client";
+import type { PrismaClient, UserRole } from "@prisma/client";
 
 /**
  * Authentication — replaces what Supabase Auth used to do.
@@ -29,7 +29,13 @@ declare module "next-auth" {
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma),
+  // The cast is a type-level formality: our client is configured to omit
+  // `user.passwordHash` globally (see lib/prisma.ts), which narrows its type
+  // away from the plain PrismaClient the adapter's signature asks for. The
+  // adapter only ever touches User, Account and Session for OAuth sign-ins,
+  // and an OAuth user has no password hash to read, so nothing it does depends
+  // on the omitted column.
+  adapter: PrismaAdapter(prisma as unknown as PrismaClient),
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
   trustHost: true,
@@ -56,7 +62,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = String(credentials?.password ?? "");
         if (!email || !password) return null;
 
-        const user = await prisma.user.findUnique({ where: { email } });
+        // The only read in the app that opts back into the password hash —
+        // lib/prisma.ts omits it globally so it cannot leak by accident.
+        const user = await prisma.user.findUnique({
+          where: { email },
+          omit: { passwordHash: false },
+        });
 
         // No hash means the account was created through Google. Returning null
         // rather than an error keeps us from revealing which emails exist.

@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
+    "db:push": "node -e \"console.error('\\n  Refused. db push rewrites the SHARED database with no migration and drops tables to do it.\\n  It has already destroyed a teammates work twice. Use:  npm run db:migrate -- --name your_change\\n  See docs/DATABASE.md\\n'); process.exit(1)\"",
     "db:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",

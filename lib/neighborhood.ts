@@ -427,9 +427,6 @@ export function deriveDealStatus(deal: DealTimestamps, now: Date = new Date()): 
   return "ACTIVE";
 }
 
-/** Statuses a resident sees without asking for the archive. */
-export const VISIBLE_DEAL_STATUSES: DealStatus[] = ["ACTIVE", "EXPIRING_SOON", "EXPIRED", "RETIRED"];
-
 /** The two the deal feed leads with. */
 export const LIVE_DEAL_STATUSES: DealStatus[] = ["ACTIVE", "EXPIRING_SOON"];
 

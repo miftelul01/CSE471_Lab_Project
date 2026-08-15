@@ -373,6 +373,23 @@ function mapMealRow(meal: MealRow, userId: string): MealAttendanceView {
  * Now it is a handful of set-based queries, and the wallet is only touched
  * when the roster actually moved and the meal has a price. `skipDuplicates`
  * covers two people opening the page at the same moment.
+ *
+ * ── KNOWN AND ACCEPTED: THIS RUNS ON A GET ──────────────────────────────────
+ * Reached from `GET /api/meals`, so a plain read creates meal rows, prunes
+ * attendance for departed members, and can rewrite expense shares. That is a
+ * deliberate trade, not an oversight, and it was reviewed as one:
+ *
+ *   - The upside is that the board is always populated. Nobody has to
+ *     remember to "open" the week, and a house that never touches the admin
+ *     screen still gets a working roster.
+ *   - The cost is that a prefetch, a link-preview crawler or a double refresh
+ *     can trigger those writes. Every one of them is idempotent — set-based,
+ *     `skipDuplicates`, and settled shares are never repriced or removed — so
+ *     a repeat produces no second effect.
+ *
+ * If this ever needs to become a pure read, the move is to call
+ * ensureMealWindow from `POST /api/meals` and the nightly cron instead, and
+ * accept that the board is empty until one of them has run.
  * ────────────────────────────────────────────────────────────────────────────
  */
 async function ensureMealWindow(
@@ -499,6 +516,25 @@ export async function loadMealAttendancePageData(
 
 export async function saveMealSlot(userId: string, houseId: string, input: MealSlotInput) {
   const valid = validateMealSlot(input);
+
+  /**
+   * A meal may only be linked to this house's own menu.
+   *
+   * The foreign key guarantees the proposal exists; it says nothing about who
+   * it belongs to. Without this check a house admin could pass any proposal id
+   * and have another household's menu title rendered on their board — every
+   * other cross-entity reference in the codebase is house-scoped, and this one
+   * was the exception.
+   */
+  if (valid.menuProposalId) {
+    const proposal = await prisma.menuProposal.findFirst({
+      where: { id: valid.menuProposalId, houseId },
+      select: { id: true },
+    });
+    if (!proposal) {
+      throw new HttpError("That menu proposal doesn't belong to your house.", 400);
+    }
+  }
 
   return prisma.$transaction(async (tx) => {
     const meal = await tx.meal.upsert({

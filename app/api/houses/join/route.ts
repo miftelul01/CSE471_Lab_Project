@@ -27,6 +27,21 @@ export const POST = withUser(async (user, req: Request) => {
   });
   if (!house) return badRequest("No house exists with that id.");
 
+  // Answered here rather than left to admitToHouse so the caller gets told
+  // what happened. Submitting your own house id is an easy mistake — the id is
+  // printed on the Houses page for sharing — and it used to demote the sender
+  // to PENDING, locking them out of their own household.
+  const existing = await prisma.houseMember.findUnique({
+    where: { houseId_userId: { houseId: house.id, userId: user.id } },
+    select: { status: true },
+  });
+  if (existing?.status === "ACTIVE") {
+    return badRequest("You're already a member of that house.");
+  }
+  if (existing?.status === "PENDING") {
+    return badRequest("You've already asked to join that house — it's waiting on a house admin.");
+  }
+
   const membership = await prisma.$transaction((tx) =>
     admitToHouse(tx, house.id, user.id, user.profile.role, "PENDING")
   );

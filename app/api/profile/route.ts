@@ -23,6 +23,19 @@ type ProfilePatch = {
   emergencyContactPhone?: string;
 };
 
+/**
+ * A field the caller did not mention keeps its current value; one they sent
+ * empty is being deliberately cleared.
+ *
+ * The difference matters more here than anywhere else in the app. This route
+ * used to write `body.phone || null` unconditionally, so any PATCH that didn't
+ * happen to include a phone number erased it — along with both emergency
+ * contacts, which are exactly the fields nobody notices are gone until the day
+ * somebody needs them.
+ */
+const patchField = (value: string | undefined) =>
+  value === undefined ? undefined : value.trim() || null;
+
 export const PATCH = withUser(async (user, req: Request) => {
   const body = await readJson<ProfilePatch>(req);
   if (!body) return badRequest("Invalid JSON body");
@@ -31,24 +44,32 @@ export const PATCH = withUser(async (user, req: Request) => {
   // send { id } or { passwordHash } and rewrite something they shouldn't.
   const patch: ProfilePatch = {
     name: body.name,
-    phone: body.phone || undefined,
-    emergencyContactName: body.emergencyContactName || undefined,
-    emergencyContactPhone: body.emergencyContactPhone || undefined,
+    phone: body.phone,
+    emergencyContactName: body.emergencyContactName,
+    emergencyContactPhone: body.emergencyContactPhone,
     role: body.role,
   };
 
   // Self-service role switching stays limited to the two non-privileged roles.
   sanitizeProfilePatch(patch);
 
+  if (patch.name !== undefined && !patch.name.trim()) {
+    return badRequest("Your name can't be empty.");
+  }
+
   const updated = await prisma.user.update({
     where: { id: user.id },
     data: {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      phone: body.phone || null,
-      emergencyContactName: body.emergencyContactName || null,
-      emergencyContactPhone: body.emergencyContactPhone || null,
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      phone: patchField(patch.phone),
+      emergencyContactName: patchField(patch.emergencyContactName),
+      emergencyContactPhone: patchField(patch.emergencyContactPhone),
       ...(patch.role ? { role: patch.role } : {}),
     },
+    // Redundant with the global omit in lib/prisma.ts, and kept deliberately:
+    // this is the route that leaked the hash, so the guard is stated where the
+    // mistake was made.
+    omit: { passwordHash: true },
   });
 
   return ok(updated);

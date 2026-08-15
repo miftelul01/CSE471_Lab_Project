@@ -35,7 +35,6 @@ import { DAY_MS, type Coords, type RouteProfile } from "@/lib/neighborhood";
  * in the Barikoi console before relying on them.
  */
 const BARIKOI_AUTOCOMPLETE_URL = "https://barikoi.xyz/v2/api/search/autocomplete/place";
-const BARIKOI_ROUTING_URL = "https://barikoi.xyz/v2/api/route";
 const ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions";
 
 /** Upstream host for map tiles, sprites and glyphs. */
@@ -65,7 +64,6 @@ export const barikoiKey = () => process.env.BARIKOI_API_KEY ?? "";
 export const orsKey = () => process.env.OPENROUTESERVICE_API_KEY ?? "";
 
 export const hasTileProvider = () => barikoiKey().length > 0;
-export const hasRoutingProvider = () => orsKey().length > 0;
 
 /**
  * Where the browser should fetch its MapLibre style from.
@@ -419,6 +417,3 @@ export async function fetchRoute(
   return { route, cached: false };
 }
 
-/** Barikoi's routing endpoint, kept for reference — ORS is the configured
- * provider because its free tier documents both a foot and a car profile. */
-export const BARIKOI_ROUTING_ENDPOINT = BARIKOI_ROUTING_URL;

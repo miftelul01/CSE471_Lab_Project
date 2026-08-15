@@ -1,4 +1,4 @@
-import { badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
+import { HttpError, badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
 import { assertCanCloseMenuVoting, assertHouseMember } from "@/lib/authz";
 import {
@@ -17,9 +17,21 @@ export const GET = withUser(async (user, req: Request) => {
   const houseId = await getActiveHouseId(user.id);
   if (!houseId) return badRequest("Join a house before proposing menus.");
 
+  // Validated like the other two verbs. Left raw, an unparseable value reached
+  // Prisma as an Invalid Date and came back through the generic validation
+  // handler instead of saying what was wrong.
   const week = new URL(req.url).searchParams.get("week_start_date");
+  let weekStartDate: Date | null = null;
+  if (week) {
+    const parsed = new Date(week);
+    if (Number.isNaN(parsed.getTime())) {
+      return badRequest("week_start_date is not a valid date.");
+    }
+    weekStartDate = mondayOf(parsed);
+  }
+
   const proposals = await prisma.menuProposal.findMany({
-    where: { houseId, ...(week ? { weekStartDate: new Date(week) } : {}) },
+    where: { houseId, ...(weekStartDate ? { weekStartDate } : {}) },
     include: { items: true, votes: true, proposedBy: { select: { id: true, name: true } } },
     orderBy: { weekStartDate: "desc" },
   });
@@ -115,37 +127,58 @@ export const PATCH = withUser(async (user, req: Request) => {
   if (Number.isNaN(rawDate.getTime())) return badRequest("weekStartDate is not a valid date.");
   const weekStartDate = mondayOf(rawDate);
 
-  const openProposals = await prisma.menuProposal.findMany({
-    where: { houseId, weekStartDate, status: "OPEN" },
-    include: { votes: { select: { vote: true } } },
-    orderBy: { createdAt: "asc" },
-  });
-  if (openProposals.length === 0) {
-    return badRequest("No open proposals for that week.");
-  }
+  /**
+   * Tallying and closing happen inside one transaction.
+   *
+   * The read used to sit outside it, so two admins pressing "close voting" at
+   * the same moment could each pick a winner from the same set of open
+   * proposals. The partial unique index on approved-menu-per-week would stop
+   * the second write landing, but the loser saw a raw "That already exists."
+   * Re-checking inside the transaction turns that into a sentence describing
+   * what actually happened.
+   */
+  const result = await prisma.$transaction(async (tx) => {
+    const alreadyApproved = await tx.menuProposal.findFirst({
+      where: { houseId, weekStartDate, status: "APPROVED" },
+      select: { id: true },
+    });
+    if (alreadyApproved) {
+      throw new HttpError("This week's menu has already been finalized.", 409);
+    }
 
-  const scored = openProposals.map((p) => ({
-    id: p.id,
-    score: p.votes.reduce((sum, v) => sum + v.vote, 0),
-  }));
-  const winner = scored.reduce((best, p) => (p.score > best.score ? p : best), scored[0]);
-  const rejectedIds = scored.filter((p) => p.id !== winner.id).map((p) => p.id);
+    const openProposals = await tx.menuProposal.findMany({
+      where: { houseId, weekStartDate, status: "OPEN" },
+      include: { votes: { select: { vote: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    if (openProposals.length === 0) {
+      throw new HttpError("No open proposals for that week.", 400);
+    }
 
-  const [approved] = await prisma.$transaction([
-    prisma.menuProposal.update({
+    const scored = openProposals.map((p) => ({
+      id: p.id,
+      score: p.votes.reduce((sum, v) => sum + v.vote, 0),
+    }));
+    // Strict `>` with a createdAt-ascending list means a tie goes to whichever
+    // was proposed first.
+    const winner = scored.reduce((best, p) => (p.score > best.score ? p : best), scored[0]);
+    const rejectedIds = scored.filter((p) => p.id !== winner.id).map((p) => p.id);
+
+    const approved = await tx.menuProposal.update({
       where: { id: winner.id },
       data: { status: "APPROVED" },
       include: { items: true, proposedBy: { select: { id: true, name: true } } },
-    }),
-    ...(rejectedIds.length > 0
-      ? [
-          prisma.menuProposal.updateMany({
-            where: { id: { in: rejectedIds } },
-            data: { status: "REJECTED" },
-          }),
-        ]
-      : []),
-  ]);
+    });
 
-  return ok({ approved, rejectedCount: rejectedIds.length });
+    if (rejectedIds.length > 0) {
+      await tx.menuProposal.updateMany({
+        where: { id: { in: rejectedIds } },
+        data: { status: "REJECTED" },
+      });
+    }
+
+    return { approved, rejectedCount: rejectedIds.length };
+  });
+
+  return ok(result);
 });

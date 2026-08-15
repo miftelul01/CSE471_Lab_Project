@@ -41,17 +41,40 @@ ALTER TABLE "listings" DROP COLUMN "cleanliness",
 ADD COLUMN     "cleanliness_level" INTEGER;
 
 -- AlterTable
+--
+-- cleanliness_level and noise_tolerance are NOT NULL with no Prisma-level
+-- default, which Postgres will not accept on a table that already has rows —
+-- there is no value to backfill them with, so the ALTER aborts with
+-- "column ... contains null values" and the whole migration rolls back.
+--
+-- On a fresh database this never showed up: migrations run before the seed, so
+-- `preferences` was empty. On any database with real data in it the migration
+-- could not be applied at all, and because it never applied, later columns it
+-- adds (users.match_rating_penalty) were missing too — which made every user
+-- query in the app throw.
+--
+-- Fixed by adding the columns WITH a default so existing rows get a value, and
+-- dropping the default immediately afterwards so the resulting schema still
+-- matches what Prisma expects. 3 is the midpoint of the 1-5 range the CHECK
+-- constraints at the end of this file enforce.
 ALTER TABLE "preferences" DROP COLUMN "cleanliness",
 ADD COLUMN     "budget_weight" "PreferenceWeight" NOT NULL DEFAULT 'MEDIUM',
-ADD COLUMN     "cleanliness_level" INTEGER NOT NULL,
+ADD COLUMN     "cleanliness_level" INTEGER NOT NULL DEFAULT 3,
 ADD COLUMN     "cleanliness_weight" "PreferenceWeight" NOT NULL DEFAULT 'MEDIUM',
 ADD COLUMN     "guest_policy" "GuestPolicy" NOT NULL DEFAULT 'OCCASIONALLY',
 ADD COLUMN     "guest_weight" "PreferenceWeight" NOT NULL DEFAULT 'MEDIUM',
-ADD COLUMN     "noise_tolerance" INTEGER NOT NULL,
+ADD COLUMN     "noise_tolerance" INTEGER NOT NULL DEFAULT 3,
 ADD COLUMN     "noise_weight" "PreferenceWeight" NOT NULL DEFAULT 'MEDIUM',
 ADD COLUMN     "pets_weight" "PreferenceWeight" NOT NULL DEFAULT 'MEDIUM',
 ADD COLUMN     "sleep_weight" "PreferenceWeight" NOT NULL DEFAULT 'MEDIUM',
 ADD COLUMN     "smoking_weight" "PreferenceWeight" NOT NULL DEFAULT 'MEDIUM';
+
+-- The defaults were scaffolding for the backfill above, not part of the model:
+-- Prisma's schema declares these as plain required Int, so leaving a database
+-- default in place would show up as drift on the next migrate.
+ALTER TABLE "preferences"
+  ALTER COLUMN "cleanliness_level" DROP DEFAULT,
+  ALTER COLUMN "noise_tolerance" DROP DEFAULT;
 
 -- AlterTable
 ALTER TABLE "roommate_posts" DROP COLUMN "cleanliness",
