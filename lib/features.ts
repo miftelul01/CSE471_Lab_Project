@@ -166,6 +166,40 @@ export const FEATURES: Feature[] = [
     tables: ["meals", "meal_attendance"],
     status: "done",
   },
+  {
+    id: "M2.4",
+    module: 2,
+    title: "Shared House Map & Neighbourhood Knowledge Base",
+    owner: OWNERS.miftelul,
+    summary:
+      "The household's own map of the neighbourhood — bazar, pharmacy, gas cylinder, tailor — with the house's notes, how recently each was confirmed accurate, distance from the house pin, directions, and an optional deals layer. A resident who joins inherits the whole map.",
+    href: "/neighborhood",
+    api: [
+      "app/api/neighborhood/bookmarks/route.ts",
+      "app/api/neighborhood/bookmarks/[id]/route.ts",
+      "app/api/neighborhood/bookmarks/[id]/notes/route.ts",
+      "app/api/neighborhood/bookmarks/[id]/confirm/route.ts",
+      "app/api/neighborhood/deals/route.ts",
+      "app/api/neighborhood/deals/[id]/route.ts",
+      "app/api/neighborhood/deals/[id]/report/route.ts",
+      "app/api/neighborhood/search/route.ts",
+      "app/api/neighborhood/house-pin/route.ts",
+      "app/api/neighborhood/places/route.ts",
+      "app/api/neighborhood/directions/route.ts",
+      "app/api/neighborhood/tiles/[...path]/route.ts",
+      "app/api/cron/neighborhood/route.ts",
+    ],
+    tables: [
+      "bookmarks",
+      "bookmark_notes",
+      "confirmations",
+      "deals",
+      "deal_reports",
+      "map_api_cache",
+      "map_api_calls",
+    ],
+    status: "done",
+  },
 
   // ── Module 3 ──────────────────────────────────────────────────────────────
   {
@@ -195,10 +229,10 @@ export const FEATURES: Feature[] = [
   {
     id: "M3.3",
     module: 3,
-    title: "Google Maps Integration",
+    title: "Listings Map & Commute Evaluation",
     owner: OWNERS.mahia,
     summary:
-      "Listings plotted on an embedded map so prospective tenants can judge commute and neighbourhood.",
+      "Rental listings plotted on an embedded map for PROSPECTIVE tenants, with commute distance to a typed destination. Property discovery only — the map of places a household already uses is M2.4.",
     href: "/map",
     api: [],
     tables: ["listings (latitude/longitude)"],

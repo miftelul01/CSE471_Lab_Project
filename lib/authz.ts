@@ -302,6 +302,8 @@ export async function assertCanDeleteExpense(user: SessionUser, expenseId: strin
   }
 
   return expense;
+}
+
 /**
  * Data Access & Privacy Matrix — "Contact Info & Legal Name: Accessible
  * after Mutual Match / Accepted Request" for roommate/applicant access
@@ -380,6 +382,159 @@ export async function assertCanCloseMenuVoting(user: SessionUser, houseId: strin
   if (!(await isHouseAdmin(user.id, houseId))) {
     throw new AuthzError("Only your house admin can close voting for the week.");
   }
+}
+
+/* ── Shared house map (M2.4) ────────────────────────────────────────────── */
+
+/**
+ * The house whose map the caller is allowed to see, derived from the session
+ * and NOTHING else.
+ *
+ * This is the single most important line of the feature. `houseId` is never
+ * read from a query string, a request body or a header — not once, not even
+ * "just for the map view". A client-supplied house id would let anybody enumerate
+ * every household's home address and daily routine by incrementing a parameter,
+ * which is a far worse leak than it first sounds: this table knows where these
+ * people live, where they shop and when they were last seen doing it.
+ *
+ * Returning null (rather than throwing) is deliberate — a resident who has not
+ * joined a house yet is not an error, they just have nothing to look at.
+ */
+export async function activeHouseIdFor(user: SessionUser): Promise<string | null> {
+  const membership = await prisma.houseMember.findFirst({
+    where: { userId: user.id, status: "ACTIVE" },
+    orderBy: { joinedAt: "asc" },
+    select: { houseId: true },
+  });
+  return membership?.houseId ?? null;
+}
+
+/** Same, for the write paths, where having no house is a request error. */
+export async function requireActiveHouseId(user: SessionUser): Promise<string> {
+  const houseId = await activeHouseIdFor(user);
+  if (!houseId) {
+    throw new AuthzError("Join a house before using the neighbourhood map.", 403);
+  }
+  return houseId;
+}
+
+/**
+ * What a given resident may see on their house's map.
+ *
+ * Two rules in one filter, and they must stay in one filter. HOUSE entries
+ * belong to the household — they outlive whoever pinned them, which is the
+ * whole point of a shared map. PRIVATE ones are visible only to their author,
+ * including from the house admin: "private" that the flat head can read is not
+ * private, and residents would stop using it for the things it is for.
+ */
+export function bookmarkVisibilityFilter(
+  user: SessionUser,
+  houseId: string
+): Prisma.BookmarkWhereInput {
+  return {
+    houseId,
+    OR: [{ visibility: "HOUSE" }, { visibility: "PRIVATE", addedById: user.id }],
+  };
+}
+
+/**
+ * Loads a bookmark the caller is allowed to see, or throws 404.
+ *
+ * 404 and not 403 on purpose: telling someone "that exists but isn't yours"
+ * about a PRIVATE pin already leaks the thing being protected.
+ */
+export async function loadVisibleBookmark(user: SessionUser, bookmarkId: string) {
+  const houseId = await requireActiveHouseId(user);
+  const bookmark = await prisma.bookmark.findFirst({
+    where: { id: bookmarkId, ...bookmarkVisibilityFilter(user, houseId) },
+    select: {
+      id: true,
+      houseId: true,
+      addedById: true,
+      visibility: true,
+      deletedAt: true,
+      name: true,
+    },
+  });
+  if (!bookmark) throw new AuthzError("No such bookmark", 404);
+  return bookmark;
+}
+
+/**
+ * Who may change or remove a pin: whoever added it, or the house admin.
+ *
+ * Any resident may ADD places, write notes and confirm entries — the map is
+ * only useful if the whole flat maintains it. Editing somebody else's entry is
+ * different: it rewrites a record other people are relying on, so it stays with
+ * the author and the person who runs the household.
+ */
+export async function assertCanEditBookmark(user: SessionUser, bookmarkId: string) {
+  const bookmark = await loadVisibleBookmark(user, bookmarkId);
+
+  if (isPlatformAdmin(user)) return bookmark;
+  if (bookmark.addedById === user.id) return bookmark;
+  // A PRIVATE pin has exactly one legitimate editor, and it is not the admin.
+  if (bookmark.visibility === "PRIVATE") {
+    throw new AuthzError("That bookmark is private to the resident who added it.", 404);
+  }
+  if (await isHouseAdmin(user.id, bookmark.houseId)) return bookmark;
+
+  throw new AuthzError("Only whoever added this place, or your house admin, can change it.");
+}
+
+/** Restoring a soft-deleted pin is a house-admin decision, not the author's:
+ * the entry was removed because the household reported it gone. */
+export async function assertCanRestoreBookmark(user: SessionUser, bookmarkId: string) {
+  const bookmark = await loadVisibleBookmark(user, bookmarkId);
+
+  if (isPlatformAdmin(user)) return bookmark;
+  // A private pin was never removed by anyone else's vote, so its owner keeps
+  // control of it.
+  if (bookmark.visibility === "PRIVATE" && bookmark.addedById === user.id) return bookmark;
+  if (await isHouseAdmin(user.id, bookmark.houseId)) return bookmark;
+
+  throw new AuthzError("Only your house admin can restore a removed place.");
+}
+
+/** Same rule as a bookmark, applied to one note. */
+export async function assertCanDeleteNote(user: SessionUser, noteId: string) {
+  const note = await prisma.bookmarkNote.findUnique({
+    where: { id: noteId },
+    select: { id: true, authorId: true, bookmarkId: true, bookmark: { select: { houseId: true } } },
+  });
+  if (!note) throw new AuthzError("No such note", 404);
+
+  // Confirms the note's bookmark is one this resident can see at all, so a
+  // guessed note id from another house resolves as not found.
+  await loadVisibleBookmark(user, note.bookmarkId);
+
+  if (isPlatformAdmin(user)) return note;
+  if (note.authorId === user.id) return note;
+  if (await isHouseAdmin(user.id, note.bookmark.houseId)) return note;
+
+  throw new AuthzError("Only whoever wrote this note, or your house admin, can delete it.");
+}
+
+/** Same rule again, applied to a deal. */
+export async function assertCanEditDeal(user: SessionUser, dealId: string) {
+  const deal = await prisma.deal.findUnique({
+    where: { id: dealId },
+    select: { id: true, postedById: true, bookmarkId: true, bookmark: { select: { houseId: true } } },
+  });
+  if (!deal) throw new AuthzError("No such deal", 404);
+
+  await loadVisibleBookmark(user, deal.bookmarkId);
+
+  if (isPlatformAdmin(user)) return deal;
+  if (deal.postedById === user.id) return deal;
+  if (await isHouseAdmin(user.id, deal.bookmark.houseId)) return deal;
+
+  throw new AuthzError("Only whoever posted this deal, or your house admin, can change it.");
+}
+
+/** Placing the house origin point is house setup, so it is the admin's. */
+export async function assertCanSetHousePin(user: SessionUser, houseId: string) {
+  await assertCanManageHouse(user, houseId);
 }
 
 /* ── Mess Court (M3.5) ──────────────────────────────────────────────────── */
