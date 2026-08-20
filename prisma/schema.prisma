@@ -313,7 +313,7 @@ model User {
   /// Cumulative penalty from upheld post-move-in profile complaints (Mess
   /// Court). Dampens this user's future compatibility scores. See
   /// lib/matching.ts and app/api/admin/disputes/uphold/route.ts.
-  matchRatingPenalty Int @default(0) @map("match_rating_penalty")
+  matchRatingPenalty  Int          @default(0) @map("match_rating_penalty")
   dietaryRestrictions DietaryTag[] @map("dietary_restrictions")
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -360,6 +360,7 @@ model User {
   dealsPosted          Deal[]
   dealReports          DealReport[]
   houseMapPinsSet      House[]                  @relation("HouseMapPinSetter")
+  savedCommuteSearches SavedCommuteSearch[]
 
   matchRequestsSent     RoommateMatchRequest[] @relation("MatchRequestSender")
   matchRequestsReceived RoommateMatchRequest[] @relation("MatchRequestReceiver")
@@ -420,7 +421,7 @@ model VerificationToken {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model House {
-  id               String  @id @default(uuid())
+  id               String    @id @default(uuid())
   name             String
   address          String
   area             String?
@@ -428,8 +429,8 @@ model House {
   longitude        Float?
   mapPinSetAt      DateTime? @map("map_pin_set_at")
   mapPinSetById    String?   @map("map_pin_set_by")
-  landlordId       String? @map("landlord_id")
-  googleCalendarId String? @map("google_calendar_id")
+  landlordId       String?   @map("landlord_id")
+  googleCalendarId String?   @map("google_calendar_id")
 
   /// Terminal fallback for a day's meal vote (M2.2) when there's no previous
   /// week's winner to fall back to either. Set by the house admin.
@@ -1220,6 +1221,49 @@ model MapApiCall {
 
   @@index([userId, createdAt])
   @@map("map_api_calls")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.3 Listings Map & Commute Evaluation — Mahia Tanzin
+//
+// Property discovery for people who do NOT live here yet — plots the `listings`
+// table on a map with a commute-distance helper. Distinct from M2.4 above (the
+// household's own private knowledge base of places it already uses): this one
+// is a public shop window, that one is private operational knowledge. Neither
+// reads nor writes the other's tables.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A resident's saved commute preference — the persistence "saved search
+/// radius alerts" actually needs. Everything else in this module (multi-origin
+/// comparison, commute-based filtering) is request-time computation with no
+/// table of its own. `lastViewedAt` is what makes "alert me to new matches"
+/// work without a notification system (none exists anywhere in this app): the
+/// saved-searches page computes "listings newer than this that still match"
+/// live on load, the same lazy-evaluation pattern as lib/joinRequests.ts and
+/// lib/menu.ts, then bumps this forward.
+model SavedCommuteSearch {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  label  String
+
+  originAddress String @map("origin_address")
+  originLat     Float  @map("origin_lat")
+  originLng     Float  @map("origin_lng")
+
+  maxCommuteMinutes Int    @map("max_commute_minutes")
+  /// "driving-car" | "foot-walking" — same RouteProfile values M2.4 already
+  /// uses (lib/neighborhood.ts), kept as a plain string rather than an enum
+  /// shared across modules so M2.4 can extend its own profile list without a
+  /// migration touching this table.
+  mode              String
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastViewedAt DateTime @default(now()) @map("last_viewed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("saved_commute_searches")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

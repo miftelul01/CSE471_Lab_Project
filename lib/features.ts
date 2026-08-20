@@ -234,9 +234,14 @@ export const FEATURES: Feature[] = [
     summary:
       "Rental listings plotted on an embedded map for PROSPECTIVE tenants, with commute distance to a typed destination. Property discovery only — the map of places a household already uses is M2.4.",
     href: "/map",
-    api: [],
-    tables: ["listings (latitude/longitude)"],
-    status: "todo",
+    api: [
+      "app/api/map/listings/route.ts",
+      "app/api/map/geocode/route.ts",
+      "app/api/map/commute/route.ts",
+      "app/api/map/saved-searches/route.ts",
+    ],
+    tables: ["listings (latitude/longitude)", "saved_commute_searches"],
+    status: "done",
   },
   {
     id: "M3.4",

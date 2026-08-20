@@ -536,6 +536,65 @@ export async function assertCanEditDeal(user: SessionUser, dealId: string) {
 export async function assertCanSetHousePin(user: SessionUser, houseId: string) {
   await assertCanManageHouse(user, houseId);
 }
+
+/* ── Listings map (M3.3) ───────────────────────────────────────────────── */
+
+/**
+ * Data Access & Privacy Matrix, listings-map edition: the public map only
+ * ever shows a fuzzed, block-level pin (see lib/mapListings.ts
+ * fuzzCoordinates). The exact coordinates and full address unlock for the
+ * listing's own landlord, a platform admin, or a viewer who has an active
+ * inquiry in — a PENDING or ACCEPTED JoinRequest for that listing, mirroring
+ * canSeeContactInfo's "mutual match" rule above.
+ */
+export async function canSeeExactListingLocation(
+  viewer: SessionUser,
+  listingId: string
+): Promise<boolean> {
+  if (isPlatformAdmin(viewer)) return true;
+
+  const listing = await prisma.listing.findUnique({
+    where: { id: listingId },
+    select: { landlordId: true },
+  });
+  if (!listing) return false;
+  if (listing.landlordId === viewer.id) return true;
+
+  const activeInquiry = await prisma.joinRequest.findFirst({
+    where: { listingId, userId: viewer.id, status: { in: ["PENDING", "ACCEPTED"] } },
+    select: { id: true },
+  });
+  return !!activeInquiry;
+}
+
+/**
+ * Bulk version of canSeeExactListingLocation — one JoinRequest query instead
+ * of N — for the two map list endpoints that need the unlock status of many
+ * listings at once, where the single-listing version's one-query-per-listing
+ * pattern would be wasteful. Keep the three rules (admin / landlord / active
+ * inquiry) in sync with canSeeExactListingLocation above if either changes.
+ */
+export async function bulkCanSeeExactListingLocation(
+  viewer: SessionUser,
+  listings: { id: string; landlordId: string }[]
+): Promise<Set<string>> {
+  if (isPlatformAdmin(viewer)) return new Set(listings.map((l) => l.id));
+
+  const unlocked = new Set(listings.filter((l) => l.landlordId === viewer.id).map((l) => l.id));
+
+  const activeInquiries = await prisma.joinRequest.findMany({
+    where: {
+      userId: viewer.id,
+      listingId: { in: listings.map((l) => l.id) },
+      status: { in: ["PENDING", "ACCEPTED"] },
+    },
+    select: { listingId: true },
+  });
+  for (const inquiry of activeInquiries) unlocked.add(inquiry.listingId);
+
+  return unlocked;
+}
+
 /* ── Mess Court (M3.5) ──────────────────────────────────────────────────── */
 
 /** Policy "disputes visible to house and landlord". */

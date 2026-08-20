@@ -136,6 +136,12 @@ export const HOURLY_LIMITS = {
   autocomplete: 60,
   directions: 60,
   tiles: 1200,
+  // M3.3's own buckets — separate from the two above so a prospective
+  // tenant browsing the listings map never eats a household's M2.4 quota,
+  // or the other way around, even though both call the same searchPlaces()/
+  // fetchRoute() functions underneath.
+  geocode: 60,
+  commute: 60,
 } as const;
 
 export type MeteredRoute = keyof typeof HOURLY_LIMITS;
@@ -308,7 +314,11 @@ async function searchViaPhoton(query: string): Promise<PlaceSuggestion[]> {
  */
 export async function searchPlaces(
   userId: string,
-  query: string
+  query: string,
+  // M3.3 passes "geocode" here so a prospective tenant searching the listings
+  // map never eats a household's M2.4 "autocomplete" budget, or vice versa —
+  // same provider, same cache, separately metered.
+  route: MeteredRoute = "autocomplete"
 ): Promise<{ suggestions: PlaceSuggestion[]; cached: boolean }> {
   const trimmed = query.trim();
   if (trimmed.length < MIN_AUTOCOMPLETE_CHARS) {
@@ -319,7 +329,7 @@ export async function searchPlaces(
   const hit = await cacheGet<PlaceSuggestion[]>(key);
   if (hit) return { suggestions: hit, cached: true };
 
-  await enforceRateLimit(userId, "autocomplete");
+  await enforceRateLimit(userId, route);
 
   const suggestions = barikoiKey()
     ? await searchViaBarikoi(trimmed)
@@ -365,7 +375,13 @@ export async function fetchRoute(
   userId: string,
   origin: Coords,
   destination: Coords,
-  profile: RouteProfile
+  profile: RouteProfile,
+  // M3.3's commuteFor() passes "commute" here so a prospective tenant's
+  // commute checks never eat a household's M2.4 "directions" budget, or vice
+  // versa — same provider, same cache, separately metered (mirrors
+  // searchPlaces()'s route parameter above). Named meterAs, not route, so it
+  // doesn't shadow the RouteResult local below.
+  meterAs: MeteredRoute = "directions"
 ): Promise<{ route: RouteResult; cached: boolean }> {
   const key = routeCacheKey(origin, destination, profile);
   const hit = await cacheGet<RouteResult>(key);
@@ -378,7 +394,7 @@ export async function fetchRoute(
     );
   }
 
-  await enforceRateLimit(userId, "directions");
+  await enforceRateLimit(userId, meterAs);
 
   const response = await fetch(`${ORS_DIRECTIONS_URL}/${profile}/geojson`, {
     method: "POST",

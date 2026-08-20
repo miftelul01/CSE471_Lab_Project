@@ -21,6 +21,7 @@ node_modules/
 # AI tools / editor config
 .claude/
 .gemini/
+.devlog.txt
 .agents/
 AGENTS.md
 .copilot/
