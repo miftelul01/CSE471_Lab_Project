@@ -83,12 +83,12 @@ export function HouseMap({
 
     // Long-press to drop a pin, on both pointer types. `contextmenu` covers the
     // desktop right-click and, on most mobile browsers, the touch-and-hold.
-    instance.on("contextmenu", (event) => {
+    instance.on("contextmenu", (event: any) => {
       longPress.current?.({ lat: event.lngLat.lat, lng: event.lngLat.lng });
     });
 
     let touchTimer: ReturnType<typeof setTimeout> | null = null;
-    instance.on("touchstart", (event) => {
+    instance.on("touchstart", (event: any) => {
       if (event.points.length !== 1) return;
       touchTimer = setTimeout(() => {
         longPress.current?.({ lat: event.lngLat.lat, lng: event.lngLat.lng });
@@ -107,7 +107,7 @@ export function HouseMap({
     // not take the page with it. Swap in the blank style so the pins — which
     // are DOM markers drawn on top, not part of the style — still render, and
     // say why the streets are missing rather than showing a mute grey box.
-    instance.on("error", (event) => {
+    instance.on("error", (event: any) => {
       const message = event.error?.message ?? String(event);
       console.warn("[m2.4 map]", message);
       if (!instance.isStyleLoaded() && !styleFailed) {

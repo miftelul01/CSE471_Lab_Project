@@ -1,6 +1,5 @@
 "use client";
 
-<<<<<<< HEAD
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge, Card, ErrorNote, SuccessNote, buttonClass, secondaryButtonClass } from "@/components/ui";
@@ -388,6 +387,9 @@ export function MenuBoard() {
                 )}
               </div>
             )}
+          </Card>
+        );
+      })}
     </div>
   );
 }
