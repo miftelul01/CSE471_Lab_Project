@@ -35,6 +35,7 @@ export type IconName =
   | "rotate"
   | "gavel"
   | "map"
+  | "pin"
   | "calendar"
   | "shield"
   | "message";
@@ -69,6 +70,7 @@ const FLAT_HEAD_NAV: NavGroup[] = [
       { label: "Roommate ads", href: "/roommates", icon: "match" },
       { label: "Guest log", href: "/guests", icon: "guest" },
       { label: "Messages", href: "/messages", icon: "message" },
+      { label: "Neighbourhood", href: "/neighborhood", icon: "pin" },
     ],
   },
   {
@@ -104,7 +106,7 @@ const MEMBER_NAV: NavGroup[] = [
       { label: "Find a room", href: "/listings", icon: "search" },
       { label: "Rooms in flats", href: "/roommates", icon: "guest" },
       { label: "Roommate matching", href: "/matches", icon: "match" },
-      { label: "Map view", href: "/map", icon: "map" },
+      { label: "Listings map", href: "/map", icon: "map" },
       { label: "Messages", href: "/messages", icon: "message" },
     ],
   },
@@ -113,6 +115,7 @@ const MEMBER_NAV: NavGroup[] = [
     items: [
       { label: "Housemates", href: "/houses", icon: "users" },
       { label: "Guest log", href: "/guests", icon: "guest" },
+      { label: "Neighbourhood", href: "/neighborhood", icon: "pin" },
     ],
   },
   {

@@ -377,9 +377,7 @@ async function main() {
   await prisma.payment.update({ where: { id: payment.id }, data: { status: "SUCCEEDED" } });
   const settled = await prisma.expenseShare.findUnique({ where: { id: tanvirShare.id } });
   const trail = await prisma.expenseShareEvent.count({ where: { shareId: tanvirShare.id } });
-  console.log(
-    `  2 expenses, 4 shares, 1 bKash payment — ledger row is now ${settled?.status}, ${trail} audit event(s)`
-  );
+  console.log("  2 expenses, 4 shares, 1 bKash payment — ledger row is now " + settled?.status + ", " + trail + " audit event(s)");
 
   console.log("Creating a week of daily meal-vote demo data (M2.2)…");
   await prisma.user.update({ where: { id: ids.nusrat }, data: { dietaryRestrictions: ["VEGETARIAN"] } });

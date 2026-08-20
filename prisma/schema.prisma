@@ -242,6 +242,51 @@ enum AccountStatus {
   SUSPENDED
 }
 
+/// M2.4 — a closed vocabulary for the places a household needs.
+///
+/// Deliberately an enum and not free text: the need finder's whole value is
+/// that "kacha bazar", "kacha bazaar", "কাঁচা বাজার" and "vegetable market" all
+/// land in one bucket. Free-text categories would fragment that on day one.
+enum BookmarkCategory {
+  KACHA_BAZAR
+  GROCERY
+  BUTCHER
+  FISH
+  PHARMACY
+  BARBER
+  TAILOR
+  LAUNDRY
+  HARDWARE
+  ACCESSORIES
+  GAS_CYLINDER
+  WATER
+  RESTAURANT
+  ATM
+  TRANSPORT
+  SERVICE
+  OTHER
+}
+
+/// HOUSE entries belong to the household and outlive any single resident.
+/// PRIVATE ones are visible only to whoever added them.
+enum Visibility {
+  HOUSE
+  PRIVATE
+}
+
+enum Verdict {
+  STILL_THERE
+  GONE
+}
+
+enum DealStatus {
+  ACTIVE
+  EXPIRING_SOON
+  EXPIRED
+  RETIRED
+  ARCHIVED
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth (NextAuth / Auth.js — field names here are fixed by the Prisma adapter)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,10 +314,6 @@ model User {
   /// Court). Dampens this user's future compatibility scores. See
   /// lib/matching.ts and app/api/admin/disputes/uphold/route.ts.
   matchRatingPenalty Int @default(0) @map("match_rating_penalty")
-
-  /// Hard dietary restrictions (M2.2) — a DayProposal missing one of these
-  /// tags is hidden from this resident's ballot, and factors into the
-  /// dietary-compatibility tie-break tier. See lib/menu.ts.
   dietaryRestrictions DietaryTag[] @map("dietary_restrictions")
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -313,6 +354,12 @@ model User {
   roommatePosts        RoommatePost[]           @relation("RoommatePoster")
   roommateApplications RoommateApplication[]
   roommatePostsRemoved RoommatePost[]           @relation("RoommatePostModerator")
+  bookmarksAdded       Bookmark[]
+  bookmarkNotes        BookmarkNote[]
+  confirmations        Confirmation[]
+  dealsPosted          Deal[]
+  dealReports          DealReport[]
+  houseMapPinsSet      House[]                  @relation("HouseMapPinSetter")
 
   matchRequestsSent     RoommateMatchRequest[] @relation("MatchRequestSender")
   matchRequestsReceived RoommateMatchRequest[] @relation("MatchRequestReceiver")
@@ -379,6 +426,8 @@ model House {
   area             String?
   latitude         Float?
   longitude        Float?
+  mapPinSetAt      DateTime? @map("map_pin_set_at")
+  mapPinSetById    String?   @map("map_pin_set_by")
   landlordId       String? @map("landlord_id")
   googleCalendarId String? @map("google_calendar_id")
 
@@ -389,7 +438,8 @@ model House {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  landlord User? @relation("HouseLandlord", fields: [landlordId], references: [id], onDelete: SetNull)
+  landlord    User? @relation("HouseLandlord", fields: [landlordId], references: [id], onDelete: SetNull)
+  mapPinSetBy User? @relation("HouseMapPinSetter", fields: [mapPinSetById], references: [id], onDelete: SetNull)
 
   members          HouseMember[]
   listings         Listing[]
@@ -405,6 +455,7 @@ model House {
   chores           Chore[]
   disputes         Dispute[]
   calendarEvents   CalendarEvent[]
+  bookmarks        Bookmark[]
 
   @@index([landlordId])
   @@map("houses")
@@ -418,6 +469,10 @@ model HouseMember {
   isHouseAdmin Boolean          @default(false) @map("is_house_admin")
   status       MembershipStatus @default(ACTIVE)
   joinedAt     DateTime         @default(now()) @map("joined_at")
+  /// When the membership ended. M2.4 needs the date, not just the LEFT status:
+  /// a departing resident's PRIVATE bookmarks are purged 14 days after they
+  /// go, and "14 days after what" has to be answerable.
+  leftAt       DateTime?        @map("left_at")
   createdAt    DateTime         @default(now()) @map("created_at")
 
   house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
@@ -972,6 +1027,199 @@ model MealRating {
 
   @@unique([mealId, userId])
   @@map("meal_ratings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2.4 Shared House Map & Neighbourhood Knowledge Base — Miftelul Mehebub
+//
+// The household's own map of the neighbourhood: where the good kacha bazar is,
+// which pharmacy stays open late, who delivers gas cylinders. A resident who
+// joins inherits the whole thing at once instead of asking the same questions
+// every new tenant has asked before them.
+//
+// Places and time-bound offers are separate tables on purpose. A shop is a
+// durable fact about the neighbourhood; "20% off until Friday" is an event with
+// its own lifecycle. Folding the second into the first would mean either
+// expiring the shop along with its offer or keeping stale discounts on screen
+// forever.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A place the house cares about.
+///
+/// `addedByName` is a snapshot, not a join. Attribution has to survive the
+/// resident leaving or their account being deleted — a note that says "added by
+/// someone, we don't know who" is worth less than one that still says Tanvir,
+/// even after Tanvir moves out. Hence `addedById` SetNull beside a frozen name.
+model Bookmark {
+  id         String           @id @default(uuid())
+  houseId    String           @map("house_id")
+  name       String
+  category   BookmarkCategory
+  /// HOUSE by default: the point of the feature is the shared map. PRIVATE is
+  /// the exception for something only one resident wants remembered.
+  visibility Visibility       @default(HOUSE)
+
+  /// Null for online-only and delivery entries, which have no place on a map
+  /// and never enter distance ranking.
+  latitude        Float?
+  longitude       Float?
+  /// The provider's id for this place. Unique per house, which is what makes
+  /// "someone already pinned this" a hard reject rather than a guess.
+  externalPlaceId String? @map("external_place_id")
+  address         String?
+  isOnline        Boolean @default(false) @map("is_online")
+  onlineUrl       String? @map("online_url")
+
+  /// Last time a resident other than the author said it was still there.
+  lastConfirmedAt DateTime? @map("last_confirmed_at")
+
+  addedById   String? @map("added_by")
+  addedByName String  @map("added_by_name")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  /// Soft delete. A shop reported gone by mistake is recoverable for 30 days;
+  /// a hard delete would take the house's notes with it.
+  deletedAt DateTime? @map("deleted_at")
+
+  house   House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  addedBy User? @relation(fields: [addedById], references: [id], onDelete: SetNull)
+
+  notes         BookmarkNote[]
+  confirmations Confirmation[]
+  deals         Deal[]
+
+  /// The hard half of deduplication: one house cannot pin the same provider
+  /// place twice. Postgres treats NULLs as distinct, so the many bookmarks with
+  /// no provider id (typed in by hand) are unaffected. Soft-deleted rows stay
+  /// covered on purpose — otherwise re-adding a removed place would collide
+  /// with the original when an admin restores it inside its 30-day window.
+  @@unique([houseId, externalPlaceId])
+  @@index([houseId, category, visibility])
+  @@index([houseId, deletedAt])
+  @@map("bookmarks")
+}
+
+/// The house's own annotation on a place — "ask for Rafiq", "closes 2-4pm",
+/// "the ilish is only fresh on Fridays". This is the knowledge half of the
+/// knowledge base and the reason the map beats a web search.
+model BookmarkNote {
+  id         String    @id @default(uuid())
+  bookmarkId String    @map("bookmark_id")
+  body       String
+  authorId   String?   @map("author_id")
+  authorName String    @map("author_name")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([bookmarkId, createdAt(sort: Desc)])
+  @@map("bookmark_notes")
+}
+
+/// One resident's verdict on whether a place is still there.
+///
+/// Kept as an append-only log rather than a counter on Bookmark, because the
+/// 24-hour rate limit and the "distinct residents" threshold are both questions
+/// about history that a single integer cannot answer.
+model Confirmation {
+  id         String   @id @default(uuid())
+  bookmarkId String   @map("bookmark_id")
+  residentId String   @map("resident_id")
+  verdict    Verdict
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  resident User     @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([bookmarkId, residentId, createdAt])
+  @@map("confirmations")
+}
+
+/// A time-bound offer attached to a place — an optional layer over the map,
+/// never a replacement for it.
+model Deal {
+  id           String  @id @default(uuid())
+  bookmarkId   String  @map("bookmark_id")
+  title        String
+  description  String?
+  discountNote String? @map("discount_note")
+
+  validFrom  DateTime  @default(now()) @map("valid_from")
+  /// Null means open-ended — a standing "10% for regulars" arrangement with no
+  /// end date. Those decay on confirmation age instead of on a clock.
+  validUntil DateTime? @map("valid_until")
+
+  /// A COPY of what the read-time derivation would return, refreshed nightly.
+  /// It exists so status can be filtered and indexed in SQL, and for no other
+  /// reason: every screen derives the status it displays. If the cron never
+  /// runs, this column goes stale and nothing a resident sees is wrong.
+  cachedStatus DealStatus @default(ACTIVE) @map("cached_status")
+
+  postedById      String?   @map("posted_by")
+  postedByName    String    @map("posted_by_name")
+  /// Someone confirmed the offer is genuinely still honoured.
+  lastConfirmedAt DateTime? @map("last_confirmed_at")
+  /// Set when the poster or an admin pulls the offer before it lapses.
+  retiredAt       DateTime? @map("retired_at")
+  /// Set when the parent bookmark is soft-deleted. Separate from retiredAt so
+  /// restoring the place brings its offers back in the state they were in.
+  deletedAt       DateTime? @map("deleted_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  postedBy User?    @relation(fields: [postedById], references: [id], onDelete: SetNull)
+
+  reports DealReport[]
+
+  @@index([bookmarkId, validUntil])
+  @@index([cachedStatus, validUntil])
+  @@map("deals")
+}
+
+model DealReport {
+  id           String   @id @default(uuid())
+  dealId       String   @map("deal_id")
+  reportedById String   @map("reported_by")
+  verdict      Verdict
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  deal       Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  reportedBy User @relation(fields: [reportedById], references: [id], onDelete: Cascade)
+
+  @@index([dealId, reportedById, createdAt])
+  @@map("deal_reports")
+}
+
+/// Responses from the paid map providers, keyed by exactly what was asked.
+///
+/// Not a nicety — it is the quota. Autocomplete is the largest call risk in the
+/// feature, and a house of six people all typing "bazar" must cost one upstream
+/// request a day, not six hundred. Kept in Postgres rather than in a module
+/// -level Map because every serverless instance starts with an empty heap, so
+/// an in-process cache would miss nearly every time.
+model MapApiCache {
+  key       String   @id
+  payload   Json
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("map_api_cache")
+}
+
+/// One row per upstream-facing request, for the 60-per-hour-per-resident limit.
+/// Only calls that could reach a provider are logged; cache hits are free.
+model MapApiCall {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  route     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("map_api_calls")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

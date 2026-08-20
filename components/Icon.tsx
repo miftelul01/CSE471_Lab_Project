@@ -23,6 +23,7 @@ const PATHS: Record<IconName, string> = {
   rotate: "M4 12a8 8 0 0113.7-5.7L21 9M21 4v5h-5M20 12a8 8 0 01-13.7 5.7L3 15M3 20v-5h5",
   gavel: "M9 4l6 6-3 3-6-6zM12 13l6 6M4 21h9",
   map: "M9 4L3 6v14l6-2 6 2 6-2V4l-6 2zM9 4v14M15 6v14",
+  pin: "M12 21s7-5.6 7-11a7 7 0 10-14 0c0 5.4 7 11 7 11zM12 12a2.5 2.5 0 100-5 2.5 2.5 0 000 5",
   calendar: "M4 7a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2zM4 10h16M8 3v4M16 3v4",
   shield: "M12 3l8 3v6c0 5-3.4 8.2-8 9-4.6-.8-8-4-8-9V6zM9 12l2 2 4-4",
   message: "M4 4h16v12H9l-5 4z",

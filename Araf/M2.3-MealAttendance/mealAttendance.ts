@@ -345,7 +345,6 @@ function dayProposalTitle(proposal: MealRow["dayProposal"]): string | null {
   const parts = [proposal.breakfast, proposal.lunch, proposal.dinner].filter((v): v is string => !!v);
   return parts.length > 0 ? parts.join(" / ") : null;
 }
-
 function mapMealRow(meal: MealRow, userId: string): MealAttendanceView {
   const myAttendance =
     meal.attendance.find((entry) => entry.userId === userId)?.status ?? AttendanceStatus.ATTENDING;

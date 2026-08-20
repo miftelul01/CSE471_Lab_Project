@@ -612,6 +612,5 @@ export async function ensureAndAdvanceWeek(houseId: string, weekStartDate: Date)
 
   await Promise.all(all.map((r) => advanceDailyVote(r)));
 
-  // Re-read so callers see post-sweep state.
   return prisma.dailyMealResult.findMany({ where: { houseId, weekStartDate }, orderBy: { dayOfWeek: "asc" } });
 }
