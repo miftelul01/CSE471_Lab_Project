@@ -1,23 +1,42 @@
-import { FeatureStub } from "@/components/FeatureStub";
-import { requireUser } from "@/lib/auth";
+import { PageHeader, Card, Badge, EmptyState, buttonClass } from "@/components/ui";
+import { requireUser, getActiveHouseId } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { CalendarClient } from "./CalendarClient";
 
 export const metadata = { title: "House calendar — Smart Mess" };
 
-/** another area Google Calendar API Integration. */
+/** M3.6 Google Calendar API Integration — Md. Mahidul Alam Araf. */
 export default async function CalendarPage() {
-  await requireUser();
+  const user = await requireUser();
+  const houseId = await getActiveHouseId(user.id);
+
+  if (!houseId) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="House Calendar"
+          subtitle="Sync critical house events to Google Calendar for better coordination."
+        />
+        <EmptyState
+          title="Join a house to use the shared calendar"
+          hint="The calendar is available once you are part of a house."
+        />
+      </div>
+    );
+  }
+
+  const events = await prisma.calendarEvent.findMany({
+    where: { houseId, startsAt: { gte: new Date() } },
+    orderBy: { startsAt: "asc" },
+  });
 
   return (
-    <FeatureStub
-      featureId="M3.6"
-      checklist={[
-        "List upcoming house events from GET /api/calendar, with a badge showing which feature each came from.",
-        "Collect the events worth syncing: rent due dates, guest check-in windows, dispute deadlines, chore due dates.",
-        "Write them into calendar_events with source_type + source_id. The unique index on that pair is what makes re-syncing update rather than duplicate.",
-        "OAuth: request https://www.googleapis.com/auth/calendar and store the refresh token in google_credentials — same table and same second-consent flow Mahia needs for Google Tasks, so build it once together.",
-        "Create a shared house calendar, save its id on houses.google_calendar_id, and insert events there.",
-        "Store the returned google_event_id and set synced_at. On the next run, patch existing events instead of creating new ones.",
-      ]}
-    />
+    <div className="space-y-6">
+      <PageHeader
+        title="House Calendar"
+        subtitle="Sync critical house events to Google Calendar for better coordination."
+      />
+      <CalendarClient events={events} houseId={houseId} />
+    </div>
   );
 }
