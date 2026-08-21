@@ -52,7 +52,9 @@ enum RoomType {
 }
 
 /// PENDING -> ACCEPTED / REJECTED / CANCELLED (sender-initiated) / EXPIRED
-/// (system, 14 days unanswered). Shared by JoinRequest and RoommateApplication.
+/// (system, 14 days unanswered). Shared by JoinRequest, RoommateApplication,
+/// and ChoreSwapRequest — a swap proposal's accept/reject/cancel shape is
+/// the same lifecycle.
 enum JoinRequestStatus {
   PENDING
   ACCEPTED
@@ -222,6 +224,12 @@ enum ChoreAssignmentStatus {
   MISSED
 }
 
+enum ChoreMarketplaceStatus {
+  OPEN
+  CLAIMED
+  CANCELLED
+}
+
 enum DisputeState {
   RAISED
   VOTING
@@ -322,45 +330,52 @@ model User {
   accounts Account[]
   sessions Session[]
 
-  housesOwned          House[]                  @relation("HouseLandlord")
-  memberships          HouseMember[]
-  listings             Listing[]
-  listingsRemoved      Listing[]                @relation("ListingRemovedBy")
-  preference           Preference?
-  matches              Match[]
-  favorites            Favorite[]
-  joinRequests         JoinRequest[]
-  guestLogs            GuestLog[]
-  expensesCreated      Expense[]                @relation("ExpenseCreator")
-  expensesPaid         Expense[]                @relation("ExpensePayer")
-  expenseShares        ExpenseShare[]
-  expenseShareEvents   ExpenseShareEvent[]
-  dayProposals         DayProposal[]
-  dailyBallots         DailyBallot[]
-  mealAttendance       MealAttendance[]
-  mealRatings          MealRating[]
-  menuTemplatesCreated MenuTemplate[]
-  ticketsReported      MaintenanceTicket[]      @relation("TicketReporter")
-  ticketsAssigned      MaintenanceTicket[]      @relation("TicketAssignee")
-  ticketEvents         MaintenanceTicketEvent[]
-  payments             Payment[]
-  choreAssignments     ChoreAssignment[]
-  disputesRaised       Dispute[]                @relation("DisputeRaiser")
-  disputesAgainst      Dispute[]                @relation("DisputeSubject")
-  disputeVotes         DisputeVote[]
-  disputeEvents        DisputeEvent[]
-  googleCredential     GoogleCredential?
-  settingsUpdated      PlatformSetting[]
-  roommatePosts        RoommatePost[]           @relation("RoommatePoster")
-  roommateApplications RoommateApplication[]
-  roommatePostsRemoved RoommatePost[]           @relation("RoommatePostModerator")
-  bookmarksAdded       Bookmark[]
-  bookmarkNotes        BookmarkNote[]
-  confirmations        Confirmation[]
-  dealsPosted          Deal[]
-  dealReports          DealReport[]
-  houseMapPinsSet      House[]                  @relation("HouseMapPinSetter")
-  savedCommuteSearches SavedCommuteSearch[]
+  housesOwned             House[]                  @relation("HouseLandlord")
+  memberships             HouseMember[]
+  listings                Listing[]
+  listingsRemoved         Listing[]                @relation("ListingRemovedBy")
+  preference              Preference?
+  matches                 Match[]
+  favorites               Favorite[]
+  joinRequests            JoinRequest[]
+  guestLogs               GuestLog[]
+  expensesCreated         Expense[]                @relation("ExpenseCreator")
+  expensesPaid            Expense[]                @relation("ExpensePayer")
+  expenseShares           ExpenseShare[]
+  expenseShareEvents      ExpenseShareEvent[]
+  dayProposals            DayProposal[]
+  dailyBallots            DailyBallot[]
+  mealAttendance          MealAttendance[]
+  mealRatings             MealRating[]
+  menuTemplatesCreated    MenuTemplate[]
+  ticketsReported         MaintenanceTicket[]      @relation("TicketReporter")
+  ticketsAssigned         MaintenanceTicket[]      @relation("TicketAssignee")
+  ticketEvents            MaintenanceTicketEvent[]
+  payments                Payment[]
+  choreAssignments        ChoreAssignment[]
+  choreAbsences           ChoreAbsence[]
+  choreSwapsProposed      ChoreSwapRequest[]       @relation("ChoreSwapProposer")
+  choreSwapsReceived      ChoreSwapRequest[]       @relation("ChoreSwapTarget")
+  choreMarketplacePosted  ChoreMarketplacePost[]   @relation("ChoreMarketplacePoster")
+  choreMarketplaceClaimed ChoreMarketplacePost[]   @relation("ChoreMarketplaceClaimer")
+  choreSubtasks           ChoreSubtask[]
+  choreQualityRatings     ChoreQualityRating[]
+  disputesRaised          Dispute[]                @relation("DisputeRaiser")
+  disputesAgainst         Dispute[]                @relation("DisputeSubject")
+  disputeVotes            DisputeVote[]
+  disputeEvents           DisputeEvent[]
+  googleCredential        GoogleCredential?
+  settingsUpdated         PlatformSetting[]
+  roommatePosts           RoommatePost[]           @relation("RoommatePoster")
+  roommateApplications    RoommateApplication[]
+  roommatePostsRemoved    RoommatePost[]           @relation("RoommatePostModerator")
+  bookmarksAdded          Bookmark[]
+  bookmarkNotes           BookmarkNote[]
+  confirmations           Confirmation[]
+  dealsPosted             Deal[]
+  dealReports             DealReport[]
+  houseMapPinsSet         House[]                  @relation("HouseMapPinSetter")
+  savedCommuteSearches    SavedCommuteSearch[]
 
   matchRequestsSent     RoommateMatchRequest[] @relation("MatchRequestSender")
   matchRequestsReceived RoommateMatchRequest[] @relation("MatchRequestReceiver")
@@ -436,6 +451,10 @@ model House {
   /// week's winner to fall back to either. Set by the house admin.
   defaultSafeMeal String? @map("default_safe_meal")
 
+  /// Off by default — not every household wants a "was it actually done
+  /// well" layer on top of chore completion. House-admin togglable.
+  choreQualityRatingEnabled Boolean @default(false) @map("chore_quality_rating_enabled")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -454,6 +473,7 @@ model House {
   tickets          MaintenanceTicket[]
   payments         Payment[]
   chores           Chore[]
+  choreAbsences    ChoreAbsence[]
   disputes         Dispute[]
   calendarEvents   CalendarEvent[]
   bookmarks        Bookmark[]
@@ -1353,6 +1373,11 @@ model Chore {
   rotationOrder     String[]       @default([]) @map("rotation_order")
   // Cursor into rotationOrder; -1 means nobody assigned yet.
   lastAssignedIndex Int            @default(-1) @map("last_assigned_index")
+  // Admin-confirmed override of which weekday a WEEKLY/BIWEEKLY occurrence
+  // lands on. The *suggestion* that feeds this is computed live from
+  // completion history (lib/chores.ts) — this field only stores the result
+  // once an admin explicitly applies it, never written to silently.
+  dueDayOfWeek      Int?           @map("due_day_of_week") @db.SmallInt
   isActive          Boolean        @default(true) @map("is_active")
   createdAt         DateTime       @default(now()) @map("created_at")
   updatedAt         DateTime       @updatedAt @map("updated_at")
@@ -1365,23 +1390,143 @@ model Chore {
 }
 
 model ChoreAssignment {
-  id           String                @id @default(uuid())
-  choreId      String                @map("chore_id")
-  userId       String                @map("user_id")
-  dueDate      DateTime              @map("due_date") @db.Date
-  status       ChoreAssignmentStatus @default(PENDING)
-  completedAt  DateTime?             @map("completed_at")
-  googleTaskId String?               @map("google_task_id")
-  createdAt    DateTime              @default(now()) @map("created_at")
-  updatedAt    DateTime              @updatedAt @map("updated_at")
+  id                  String                @id @default(uuid())
+  choreId             String                @map("chore_id")
+  userId              String                @map("user_id")
+  dueDate             DateTime              @map("due_date") @db.Date
+  status              ChoreAssignmentStatus @default(PENDING)
+  completedAt         DateTime?             @map("completed_at")
+  googleTaskId        String?               @map("google_task_id")
+  // Set whenever the assignee changes after a task was already pushed (swap
+  // accepted, marketplace claim) or a push attempt failed. The rotation
+  // cron's reconcile pass (app/api/cron/chores/route.ts) scans this rather
+  // than trying to sync Google inline on every write — a Google outage must
+  // never block the write that actually matters (who owes what).
+  googleSyncPendingAt DateTime?             @map("google_sync_pending_at")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
 
   chore Chore @relation(fields: [choreId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subtasks      ChoreSubtask[]
+  swapProposals ChoreSwapRequest[]     @relation("SwapProposerAssignment")
+  swapTargets   ChoreSwapRequest[]     @relation("SwapTargetAssignment")
+  marketplace   ChoreMarketplacePost[]
+  ratings       ChoreQualityRating[]
 
   // Running the rotation job twice for one period must not double-assign.
   @@unique([choreId, dueDate])
   @@index([userId, dueDate(sort: Desc)])
   @@map("chore_assignments")
+}
+
+/// A resident marking a week (or range) unavailable. The rotation job skips
+/// anyone with an absence covering the occurrence's due date without moving
+/// lastAssignedIndex backward — see the fairness comment on that field.
+model ChoreAbsence {
+  id        String   @id @default(uuid())
+  houseId   String   @map("house_id")
+  userId    String   @map("user_id")
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  reason    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  house House @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startDate])
+  @@index([houseId, startDate])
+  @@map("chore_absences")
+}
+
+/// Direct 1-to-1 swap: proposer offers their own assignment in exchange for
+/// the target's. Reuses JoinRequestStatus (see that enum's doc comment) —
+/// the accept/reject/cancel shape is identical to a join request's.
+model ChoreSwapRequest {
+  id                   String            @id @default(uuid())
+  proposerAssignmentId String            @map("proposer_assignment_id")
+  targetAssignmentId   String            @map("target_assignment_id")
+  proposerUserId       String            @map("proposer_user_id")
+  targetUserId         String            @map("target_user_id")
+  status               JoinRequestStatus @default(PENDING)
+  message              String?
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+
+  proposerAssignment ChoreAssignment @relation("SwapProposerAssignment", fields: [proposerAssignmentId], references: [id], onDelete: Cascade)
+  targetAssignment   ChoreAssignment @relation("SwapTargetAssignment", fields: [targetAssignmentId], references: [id], onDelete: Cascade)
+  proposer           User            @relation("ChoreSwapProposer", fields: [proposerUserId], references: [id], onDelete: Cascade)
+  target             User            @relation("ChoreSwapTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@index([targetUserId, status])
+  @@index([proposerAssignmentId])
+  @@map("chore_swap_requests")
+}
+
+/// Enhancement: a shared pool where any resident can claim a chore someone
+/// else posted, rather than needing a specific willing swap partner.
+model ChoreMarketplacePost {
+  id              String                 @id @default(uuid())
+  assignmentId    String                 @map("assignment_id")
+  postedByUserId  String                 @map("posted_by")
+  status          ChoreMarketplaceStatus @default(OPEN)
+  claimedByUserId String?                @map("claimed_by")
+  claimedAt       DateTime?              @map("claimed_at")
+  createdAt       DateTime               @default(now()) @map("created_at")
+
+  assignment ChoreAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  postedBy   User            @relation("ChoreMarketplacePoster", fields: [postedByUserId], references: [id], onDelete: Cascade)
+  claimedBy  User?           @relation("ChoreMarketplaceClaimer", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([assignmentId])
+  @@map("chore_marketplace_posts")
+}
+
+/// Enhancement: breaks one large occurrence into pieces assigned to
+/// different residents. A genuinely separate table (not a self-relation on
+/// ChoreAssignment) so the unique index on (choreId, dueDate) above — the
+/// rotation job's whole idempotency guarantee — is never touched by
+/// splitting. "Is this occurrence split" is derived (subtasks.length > 0);
+/// "parent completes once every subtask does" is app logic (lib/chores.ts).
+model ChoreSubtask {
+  id                  String                @id @default(uuid())
+  assignmentId        String                @map("assignment_id")
+  userId              String                @map("user_id")
+  title               String
+  status              ChoreAssignmentStatus @default(PENDING)
+  completedAt         DateTime?             @map("completed_at")
+  googleTaskId        String?               @map("google_task_id")
+  googleSyncPendingAt DateTime?             @map("google_sync_pending_at")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+
+  assignment ChoreAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId])
+  @@map("chore_subtasks")
+}
+
+/// Enhancement: optional, per-house-togglable (House.choreQualityRatingEnabled),
+/// anonymous 1-5 rating of how well a completed chore was actually done —
+/// distinct from ChoreAssignment.status, which only answers "did it happen."
+/// "Anonymous" is presentation-only: userId is stored to enforce one rating
+/// per person and block self-rating, but must never be exposed in any API
+/// response — only the aggregate (avg, count) is ever returned.
+model ChoreQualityRating {
+  id           String   @id @default(uuid())
+  assignmentId String   @map("assignment_id")
+  userId       String   @map("user_id")
+  score        Int      @db.SmallInt
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  assignment ChoreAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, userId])
+  @@map("chore_quality_ratings")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1453,13 +1598,20 @@ model DisputeEvent {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model GoogleCredential {
-  userId       String    @id @map("user_id")
-  accessToken  String?   @map("access_token")
-  refreshToken String?   @map("refresh_token")
-  expiresAt    DateTime? @map("expires_at")
-  scopes       String[]  @default([])
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  userId           String    @id @map("user_id")
+  accessToken      String?   @map("access_token")
+  refreshToken     String?   @map("refresh_token")
+  expiresAt        DateTime? @map("expires_at")
+  scopes           String[]  @default([])
+  /// Set when a refresh-token exchange fails with invalid_grant (revoked or
+  /// expired access) — cleared on the next successful reconnect. Shared
+  /// across M3.4 (Tasks) and M3.6 (Calendar): a revoked token is revoked
+  /// regardless of which feature's scope it carried, so this field is
+  /// deliberately not scoped to one feature. Does not touch calendar_events
+  /// (M3.6's own table) — M3.4 never reads or writes that table.
+  needsReconnectAt DateTime? @map("needs_reconnect_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

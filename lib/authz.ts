@@ -374,6 +374,45 @@ export async function assertCanSetMatchRequestStatus(
   return request;
 }
 
+/**
+ * ChoreSwapRequest equivalent of assertCanSetJoinRequestStatus: the
+ * proposer may only cancel, the target may only accept or reject.
+ */
+export async function assertCanSetChoreSwapStatus(
+  user: SessionUser,
+  requestId: string,
+  status: "ACCEPTED" | "REJECTED" | "CANCELLED"
+) {
+  const request = await prisma.choreSwapRequest.findUnique({
+    where: { id: requestId },
+    select: {
+      proposerUserId: true,
+      targetUserId: true,
+      status: true,
+      proposerAssignmentId: true,
+      targetAssignmentId: true,
+    },
+  });
+  if (!request) throw new AuthzError("No such swap request", 404);
+  if (request.status !== "PENDING") {
+    throw new AuthzError(`This request is already ${request.status.toLowerCase()}.`, 404);
+  }
+
+  const isProposer = request.proposerUserId === user.id;
+  const isTarget = request.targetUserId === user.id;
+
+  if (isProposer && status !== "CANCELLED") {
+    throw new AuthzError("As the proposer you can only cancel a swap.");
+  }
+  if (!isProposer && !isTarget) {
+    throw new AuthzError("Only the proposer or target can update this swap.");
+  }
+  if (isTarget && status === "CANCELLED") {
+    throw new AuthzError("Only the proposer can cancel their own swap.");
+  }
+  return request;
+}
+
 /* ── Menu voting (M2.2) ─────────────────────────────────────────────────── */
 
 /** Policy: the house admin (flat admin or landlord) closes the week's vote. */

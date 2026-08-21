@@ -1,6 +1,5 @@
-import { NextResponse } from "next/server";
-
-import { ok } from "@/lib/api";
+import { ok, unauthorized } from "@/lib/api";
+import { authorizedCron } from "@/lib/cron";
 import {
   DAY_MS,
   LIVE_DEAL_STATUSES,
@@ -26,21 +25,9 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-/** Vercel sends this on scheduled invocations. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    // Without a secret configured the endpoint would be an open button anyone
-    // could press. In development that is convenient; in production it is a
-    // stranger purging bookmarks.
-    return process.env.NODE_ENV !== "production";
-  }
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
+  if (!authorizedCron(req)) {
+    return unauthorized("Not authorized");
   }
 
   const now = new Date();
