@@ -114,8 +114,14 @@ async function cacheSet(key: string, payload: unknown, ttlMs: number): Promise<v
  * Five decimal places is about a metre — finer than any route would differ by. */
 const coordKey = (c: Coords) => `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`;
 
-export const autocompleteCacheKey = (query: string) =>
-  `autocomplete:${query.trim().toLowerCase().replace(/\s+/g, " ")}`;
+/**
+ * Keyed on the district as well as the query, because the district biases the
+ * results. Without it, entries cached before the bias existed — or by an
+ * instance configured for another district — would be served for a full day as
+ * answers to a question they were never asked.
+ */
+export const autocompleteCacheKey = (query: string, district = "") =>
+  `autocomplete:${district.toLowerCase()}:${query.trim().toLowerCase().replace(/\s+/g, " ")}`;
 
 export const routeCacheKey = (origin: Coords, destination: Coords, profile: RouteProfile) =>
   `route:${coordKey(origin)}:${coordKey(destination)}:${profile}`;
@@ -229,10 +235,26 @@ function normalizePlaces(payload: unknown): PlaceSuggestion[] {
     .filter((place) => place.name.trim().length > 0);
 }
 
+/**
+ * District the search is biased toward.
+ *
+ * Barikoi's autocomplete ranks nationally by default, so a household in
+ * Bashundhara searching "pharmacy" gets a first result in Shyamnagar, 250km
+ * away — useless for a feature whose whole premise is walking distance.
+ *
+ * The provider ignores latitude/longitude on this endpoint (verified against
+ * the live API); `district` is what it actually honours, and with it the same
+ * search returns Kuril, the next neighbourhood over. Overridable for anyone
+ * running the project outside Dhaka, which is the same reason DHAKA_BIAS above
+ * exists for the keyless Photon path.
+ */
+const searchDistrict = () => process.env.BARIKOI_DISTRICT ?? "Dhaka";
+
 async function searchViaBarikoi(query: string): Promise<PlaceSuggestion[]> {
   const url = new URL(BARIKOI_AUTOCOMPLETE_URL);
   url.searchParams.set("api_key", barikoiKey());
   url.searchParams.set("q", query);
+  url.searchParams.set("district", searchDistrict());
 
   const response = await fetch(url, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -325,7 +347,9 @@ export async function searchPlaces(
     return { suggestions: [], cached: false };
   }
 
-  const key = autocompleteCacheKey(trimmed);
+  // Only the Barikoi path is district-biased; Photon uses its own DHAKA_BIAS
+  // and must not share a cache entry with differently-ranked results.
+  const key = autocompleteCacheKey(trimmed, barikoiKey() ? searchDistrict() : "photon");
   const hit = await cacheGet<PlaceSuggestion[]>(key);
   if (hit) return { suggestions: hit, cached: true };
 

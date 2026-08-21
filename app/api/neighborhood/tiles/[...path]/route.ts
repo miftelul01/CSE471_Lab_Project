@@ -88,7 +88,15 @@ export const GET = withUser(async (user, req: Request, { params }: Params) => {
       .join(`${proxyBase}/`)
       // Belt and braces: if the provider embedded the key anywhere the rewrite
       // did not touch, it does not leave this server.
-      .replace(/([?&])(key|api_key)=[^&"'\\]*/gi, "$1");
+      .replace(/([?&])(key|api_key)=[^&"'\\]*/gi, "$1")
+      // Removing the key leaves a dangling "?" behind, and for the sprite that
+      // is not cosmetic. MapLibre builds its requests by concatenating onto the
+      // sprite URL, so ".../sprite?" becomes ".../sprite?.json" — the proxy then
+      // asks upstream for "sprite" with no extension, gets a 404, and every
+      // icon on the map silently fails to render. Glyphs survive it only
+      // because a trailing "?" in a fetch URL is merely an empty query string.
+      .replace(/\?&+/g, "?")
+      .replace(/[?&]+(?=["'])/g, "");
 
     return new NextResponse(rewritten, {
       status: 200,
