@@ -233,8 +233,15 @@ The two redundant duplicate folders have been **deleted**. Only the canonical ro
 | GET/PUT/DEL /api/roommate-posts/[id] | `app/api/roommate-posts/[id]/route.ts` | Single post ops | **Mahia** |
 | GET/POST /api/menu-proposals | `app/api/menu-proposals/route.ts` | Menu proposals & votes | **Mahia** |
 | GET/PUT /api/menu-proposals/[id] | `app/api/menu-proposals/[id]/route.ts` | Single proposal ops | **Mahia** |
-| GET/POST /api/chores | `app/api/chores/route.ts` | Chore assignments | **Mahia** |
-| POST /api/chores/rotate | `app/api/chores/rotate/route.ts` | Trigger chore rotation | **Mahia** |
+| GET/POST /api/chores | `app/api/chores/route.ts` | Chore list & creation | **Mahia** |
+| GET/PATCH /api/chores/[choreId] | `app/api/chores/[choreId]/route.ts` | Admin edits, due-date suggestion | **Mahia** |
+| * /api/chores/assignments/[assignmentId]/* | `app/api/chores/assignments/` complete, reschedule, calendar-check, split, subtasks, ratings | Per-assignment actions | **Mahia** |
+| GET/POST/DEL /api/chores/absences | `app/api/chores/absences/` | Absence handling | **Mahia** |
+| GET/POST/PATCH /api/chores/swaps | `app/api/chores/swaps/` | Direct chore swaps | **Mahia** |
+| GET/POST/PATCH /api/chores/marketplace | `app/api/chores/marketplace/` | Chore marketplace | **Mahia** |
+| PATCH /api/chores/settings | `app/api/chores/settings/route.ts` | Quality-rating toggle | **Mahia** |
+| GET /api/cron/chores | `app/api/cron/chores/route.ts` | Scheduled rotation job (replaces the old `/api/chores/rotate` stub, since removed — Vercel Cron sends GET, not POST) | **Mahia** |
+| GET/POST /api/google/connect[/callback], GET /api/google/status, POST /api/google/disconnect | `app/api/google/` | Google Tasks/Calendar OAuth | **Mahia** |
 | GET/POST /api/guests | `app/api/guests/route.ts` | Guest check-in/out log | **Araf** |
 | GET/POST /api/meals | `app/api/meals/route.ts` | Meal attendance toggle | **Araf** |
 | GET /api/calendar | `app/api/calendar/route.ts` | Calendar events | **Araf** |

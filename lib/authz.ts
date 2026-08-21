@@ -374,6 +374,45 @@ export async function assertCanSetMatchRequestStatus(
   return request;
 }
 
+/**
+ * ChoreSwapRequest equivalent of assertCanSetJoinRequestStatus: the
+ * proposer may only cancel, the target may only accept or reject.
+ */
+export async function assertCanSetChoreSwapStatus(
+  user: SessionUser,
+  requestId: string,
+  status: "ACCEPTED" | "REJECTED" | "CANCELLED"
+) {
+  const request = await prisma.choreSwapRequest.findUnique({
+    where: { id: requestId },
+    select: {
+      proposerUserId: true,
+      targetUserId: true,
+      status: true,
+      proposerAssignmentId: true,
+      targetAssignmentId: true,
+    },
+  });
+  if (!request) throw new AuthzError("No such swap request", 404);
+  if (request.status !== "PENDING") {
+    throw new AuthzError(`This request is already ${request.status.toLowerCase()}.`, 404);
+  }
+
+  const isProposer = request.proposerUserId === user.id;
+  const isTarget = request.targetUserId === user.id;
+
+  if (isProposer && status !== "CANCELLED") {
+    throw new AuthzError("As the proposer you can only cancel a swap.");
+  }
+  if (!isProposer && !isTarget) {
+    throw new AuthzError("Only the proposer or target can update this swap.");
+  }
+  if (isTarget && status === "CANCELLED") {
+    throw new AuthzError("Only the proposer can cancel their own swap.");
+  }
+  return request;
+}
+
 /* ── Menu voting (M2.2) ─────────────────────────────────────────────────── */
 
 /** Policy: the house admin (flat admin or landlord) closes the week's vote. */
@@ -593,6 +632,107 @@ export async function bulkCanSeeExactListingLocation(
   for (const inquiry of activeInquiries) unlocked.add(inquiry.listingId);
 
   return unlocked;
+}
+
+/* ── Maintenance tickets (M3.1) ─────────────────────────────────────────── */
+
+/**
+ * Loads a ticket the caller is entitled to see at all.
+ *
+ * Scoped to the caller's own house rather than taken on trust from the id:
+ * ticket ids are guessable enough that "show me ticket X" must not be a way to
+ * read another household's repair history, which names their address problems
+ * and who was in the flat when.
+ */
+export async function loadVisibleTicket(user: SessionUser, ticketId: string) {
+  const ticket = await prisma.maintenanceTicket.findUnique({
+    where: { id: ticketId },
+    select: { id: true, houseId: true, reportedById: true, status: true },
+  });
+  if (!ticket) throw new AuthzError("No such maintenance ticket", 404);
+
+  if (!isPlatformAdmin(user)) {
+    const [member, house] = await Promise.all([
+      isHouseMember(user.id, ticket.houseId),
+      prisma.house.findFirst({
+        where: { id: ticket.houseId, landlordId: user.id },
+        select: { id: true },
+      }),
+    ]);
+    // 404 rather than 403: confirming a ticket exists in a house you have no
+    // business in already leaks that the house exists and has problems.
+    if (!member && !house) throw new AuthzError("No such maintenance ticket", 404);
+  }
+  return ticket;
+}
+
+/**
+ * Who may drive the status: the landlord who owns the property, or the house
+ * admin. Straight from the brief — "the landlord receives the ticket and
+ * updates the status".
+ *
+ * Deliberately NOT the reporter. A resident marking their own complaint
+ * resolved is how a leaking tap gets closed without anybody fixing it, and the
+ * timeline would record it as though the house had acted.
+ */
+export async function assertCanSetTicketStatus(user: SessionUser, ticketId: string) {
+  const ticket = await loadVisibleTicket(user, ticketId);
+  if (isPlatformAdmin(user)) return ticket;
+  if (await isHouseAdmin(user.id, ticket.houseId)) return ticket;
+
+  throw new AuthzError("Only your landlord or house admin can change a ticket's status.");
+}
+
+/**
+ * Who may edit the ticket's own text: whoever reported it, or the house admin
+ * on their behalf. The status is a separate decision — see above.
+ */
+export async function assertCanEditTicketDetails(user: SessionUser, ticketId: string) {
+  const ticket = await loadVisibleTicket(user, ticketId);
+  if (isPlatformAdmin(user)) return ticket;
+  if (ticket.reportedById === user.id) return ticket;
+  if (await isHouseAdmin(user.id, ticket.houseId)) return ticket;
+
+  throw new AuthzError("Only whoever reported this, or your house admin, can edit it.");
+}
+
+/* ── Payments (M3.2) ────────────────────────────────────────────────────── */
+
+/**
+ * Loads the expense share a caller is about to pay for, with the amount and
+ * house taken FROM THE DATABASE.
+ *
+ * The single most important rule in M3.2: the request body supplies a share id
+ * and nothing else. A client-supplied amount would let anyone settle a
+ * 20,000 BDT bill by posting {"amount": 1}, and a client-supplied user id would
+ * let them settle it against somebody else's ledger row.
+ *
+ * Paying somebody else's share is refused rather than quietly allowed. It
+ * sounds generous, but the ledger's whole purpose is recording who actually
+ * paid; a gift needs to be a transfer between housemates, not a silent
+ * overwrite of the record.
+ */
+export async function loadPayableShare(user: SessionUser, shareId: string) {
+  const share = await prisma.expenseShare.findUnique({
+    where: { id: shareId },
+    select: {
+      id: true,
+      userId: true,
+      amount: true,
+      status: true,
+      expense: { select: { houseId: true, title: true } },
+      payments: {
+        where: { status: { in: ["INITIATED", "PENDING", "SUCCEEDED"] } },
+        select: { id: true, status: true },
+      },
+    },
+  });
+  if (!share) throw new AuthzError("No such expense share", 404);
+
+  if (share.userId !== user.id) {
+    throw new AuthzError("You can only pay your own share.");
+  }
+  return share;
 }
 
 /* ── Mess Court (M3.5) ──────────────────────────────────────────────────── */

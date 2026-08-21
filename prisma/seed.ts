@@ -314,6 +314,19 @@ async function main() {
     prisma.maintenanceTicket.create({ data: { houseId: houseIds.bashundhara, reportedById: ids.nusrat, title: "Wi-Fi router keeps dropping", description: "Disconnects every evening around 9pm.", category: "Internet", status: "OPEN", priority: "LOW" } }),
   ]);
 
+  // Every ticket opens with a "Reported" row, matching what POST /api/maintenance
+  // writes. Without it the three seeded tickets demo with an empty history
+  // panel while anything reported live has one, which reads as a broken feature.
+  await prisma.maintenanceTicketEvent.createMany({
+    data: tickets.map((t) => ({
+      ticketId: t.id,
+      actorId: t.reportedById,
+      toStatus: "OPEN" as const,
+      note: "Reported",
+      createdAt: t.createdAt,
+    })),
+  });
+
   // Move them through their statuses, writing the history rows the way the app
   // does now (triggers can no longer record who acted).
   for (const [ticket, states, actor] of [
@@ -490,6 +503,307 @@ async function main() {
     },
   });
   console.log("  1 post-move-in profile complaint (RAISED, awaiting admin review)");
+
+  /* ── M2.4 Shared House Map & Neighbourhood Knowledge Base ─────────────── */
+
+  console.log("Creating the neighbourhood map (M2.4)…");
+
+  const inDays = (n: number) => new Date(Date.now() + n * 86_400_000);
+
+  // Without a confirmed pin the feature keeps distance and routing switched off
+  // and asks the admin to place one — so a demo without this shows only the
+  // "place your house first" empty state, never the map itself.
+  await prisma.house.update({
+    where: { id: houseIds.bashundhara },
+    data: { mapPinSetAt: daysAgo(58), mapPinSetById: ids.nusrat },
+  });
+
+  // Real coordinates a short walk from the Bashundhara house pin, so the
+  // distances the board renders are plausible rather than random.
+  const PLACES = [
+    { name: "Bashundhara Kacha Bazar", category: "KACHA_BAZAR" as const, lat: 23.8138, lng: 90.4192, address: "Block C main road", confirmed: 2 },
+    { name: "Shwapno Superstore", category: "GROCERY" as const, lat: 23.8121, lng: 90.4165, address: "Block B, Road 3", confirmed: 6 },
+    { name: "Rahim's Meat Shop", category: "BUTCHER" as const, lat: 23.8144, lng: 90.4188, address: "Beside the kacha bazar", confirmed: 12 },
+    { name: "Padma Fish Corner", category: "FISH" as const, lat: 23.8141, lng: 90.4190, address: "Kacha bazar, north aisle", confirmed: 12 },
+    { name: "Lazz Pharma", category: "PHARMACY" as const, lat: 23.8109, lng: 90.4149, address: "Block A, Road 1", confirmed: 3 },
+    { name: "Star Gents Parlour", category: "BARBER" as const, lat: 23.8096, lng: 90.4137, address: "Block B, Road 6", confirmed: 30 },
+    { name: "Nazma Tailors", category: "TAILOR" as const, lat: 23.8088, lng: 90.4118, address: "Block D, Road 2", confirmed: 45 },
+    { name: "Speed Laundry", category: "LAUNDRY" as const, lat: 23.8114, lng: 90.4172, address: "Block B, Road 4", confirmed: 8 },
+    { name: "Bashundhara Hardware", category: "HARDWARE" as const, lat: 23.8152, lng: 90.4205, address: "Gate 2 approach road", confirmed: 60 },
+    { name: "Omera Gas Cylinder Supply", category: "GAS_CYLINDER" as const, lat: 23.8161, lng: 90.4211, address: "Delivers to the door", confirmed: 15 },
+    { name: "Fresh Water Jar Service", category: "WATER" as const, lat: 23.8130, lng: 90.4180, address: "Call for delivery", confirmed: 4 },
+    { name: "Sultan's Dine", category: "RESTAURANT" as const, lat: 23.8105, lng: 90.4154, address: "Block A, Road 2", confirmed: 9 },
+    { name: "DBBL ATM (Gate 1)", category: "ATM" as const, lat: 23.8099, lng: 90.4131, address: "Beside the main gate", confirmed: 1 },
+    { name: "CNG stand, Gate 1", category: "TRANSPORT" as const, lat: 23.8094, lng: 90.4127, address: "Main gate approach", confirmed: 1 },
+  ];
+
+  const bookmarkIds: Record<string, string> = {};
+  for (const [i, place] of PLACES.entries()) {
+    // Alternated so the board demonstrates attribution surviving different
+    // authors rather than every pin reading "added by Nusrat".
+    const author = i % 3 === 0 ? ids.tanvir : ids.nusrat;
+    const authorName = i % 3 === 0 ? "Tanvir Hasan" : "Nusrat Jahan";
+    const bookmark = await prisma.bookmark.create({
+      data: {
+        houseId: houseIds.bashundhara,
+        name: place.name,
+        category: place.category,
+        visibility: "HOUSE",
+        latitude: place.lat,
+        longitude: place.lng,
+        address: place.address,
+        addedById: author,
+        addedByName: authorName,
+        lastConfirmedAt: daysAgo(place.confirmed),
+        createdAt: daysAgo(place.confirmed + 10),
+      },
+    });
+    bookmarkIds[place.category] = bookmark.id;
+    if (place.name === "Shwapno Superstore") bookmarkIds.shwapno = bookmark.id;
+    if (place.name === "Bashundhara Kacha Bazar") bookmarkIds.bazar = bookmark.id;
+    if (place.name === "Lazz Pharma") bookmarkIds.pharmacy = bookmark.id;
+    if (place.name === "Nazma Tailors") bookmarkIds.tailor = bookmark.id;
+  }
+
+  // One PRIVATE pin, so the visibility rule is demonstrable: Tanvir sees it,
+  // Nusrat does not — not even as flat admin.
+  await prisma.bookmark.create({
+    data: {
+      houseId: houseIds.bashundhara, name: "My physiotherapist", category: "SERVICE",
+      visibility: "PRIVATE", latitude: 23.8072, longitude: 90.4101,
+      address: "Block E, Road 4", addedById: ids.tanvir, addedByName: "Tanvir Hasan",
+      lastConfirmedAt: daysAgo(20), createdAt: daysAgo(25),
+    },
+  });
+
+  // One soft-deleted pin, so "removed places" and the restore path have
+  // something behind them.
+  await prisma.bookmark.create({
+    data: {
+      houseId: houseIds.bashundhara, name: "Old tea stall (closed down)", category: "RESTAURANT",
+      visibility: "HOUSE", latitude: 23.8117, longitude: 90.4159,
+      addedById: ids.nusrat, addedByName: "Nusrat Jahan",
+      createdAt: daysAgo(120), deletedAt: daysAgo(9),
+    },
+  });
+
+  // A second house gets its own map, which is what makes the house-scoping
+  // visible: signed in as Sadia you see Banani's places and none of these.
+  await prisma.house.update({
+    where: { id: houseIds.banani },
+    data: { mapPinSetAt: daysAgo(80), mapPinSetById: ids.sadia },
+  });
+  await prisma.bookmark.createMany({
+    data: [
+      { houseId: houseIds.banani, name: "Banani Kacha Bazar", category: "KACHA_BAZAR", latitude: 23.7948, longitude: 90.4061, address: "Road 11", addedById: ids.sadia, addedByName: "Sadia Islam", lastConfirmedAt: daysAgo(5) },
+      { houseId: houseIds.banani, name: "Unimart Banani", category: "GROCERY", latitude: 23.7929, longitude: 90.4035, address: "Kemal Ataturk Ave", addedById: ids.sadia, addedByName: "Sadia Islam", lastConfirmedAt: daysAgo(2) },
+      { houseId: houseIds.banani, name: "Banani Pharmacy", category: "PHARMACY", latitude: 23.7941, longitude: 90.4050, address: "Road 17", addedById: ids.sadia, addedByName: "Sadia Islam", lastConfirmedAt: daysAgo(11) },
+    ],
+  });
+
+  await prisma.bookmarkNote.createMany({
+    data: [
+      { bookmarkId: bookmarkIds.bazar, body: "Go before 8am on Friday or the good fish is gone.", authorId: ids.nusrat, authorName: "Nusrat Jahan", createdAt: daysAgo(14) },
+      { bookmarkId: bookmarkIds.bazar, body: "The stall at the far end weighs honestly — the first two do not.", authorId: ids.tanvir, authorName: "Tanvir Hasan", createdAt: daysAgo(6) },
+      { bookmarkId: bookmarkIds.shwapno, body: "Card machine is often down. Carry cash.", authorId: ids.tanvir, authorName: "Tanvir Hasan", createdAt: daysAgo(4) },
+      { bookmarkId: bookmarkIds.pharmacy, body: "Open till 11pm, and they deliver for orders over 500 taka.", authorId: ids.nusrat, authorName: "Nusrat Jahan", createdAt: daysAgo(3) },
+      { bookmarkId: bookmarkIds.tailor, body: "Ask for Nazma herself, not the assistant. Two-day turnaround.", authorId: ids.nusrat, authorName: "Nusrat Jahan", createdAt: daysAgo(40) },
+    ],
+  });
+
+  await prisma.confirmation.createMany({
+    data: [
+      { bookmarkId: bookmarkIds.bazar, residentId: ids.nusrat, verdict: "STILL_THERE", createdAt: daysAgo(2) },
+      { bookmarkId: bookmarkIds.bazar, residentId: ids.tanvir, verdict: "STILL_THERE", createdAt: daysAgo(2) },
+      { bookmarkId: bookmarkIds.shwapno, residentId: ids.tanvir, verdict: "STILL_THERE", createdAt: daysAgo(6) },
+      { bookmarkId: bookmarkIds.pharmacy, residentId: ids.nusrat, verdict: "STILL_THERE", createdAt: daysAgo(3) },
+      // A disagreement, so the freshness UI has a contested entry to show.
+      { bookmarkId: bookmarkIds.tailor, residentId: ids.tanvir, verdict: "GONE", createdAt: daysAgo(1) },
+    ],
+  });
+
+  // Deals across every status the derived-at-read-time logic can produce.
+  const dealActive = await prisma.deal.create({
+    data: {
+      bookmarkId: bookmarkIds.shwapno, title: "10% off groceries over 2000 taka",
+      description: "Show the app at the counter.", discountNote: "10%",
+      validFrom: daysAgo(5), validUntil: inDays(12),
+      postedById: ids.nusrat, postedByName: "Nusrat Jahan", lastConfirmedAt: daysAgo(2),
+    },
+  });
+  await prisma.deal.create({
+    data: {
+      bookmarkId: bookmarkIds.bazar, title: "Friday morning fish discount",
+      description: "Early birds only, before 8am.", discountNote: "Varies",
+      validFrom: daysAgo(20), validUntil: inDays(1),
+      postedById: ids.tanvir, postedByName: "Tanvir Hasan", lastConfirmedAt: daysAgo(4),
+    },
+  });
+  await prisma.deal.create({
+    data: {
+      bookmarkId: bookmarkIds.pharmacy, title: "Free home delivery over 500 taka",
+      description: "No end date given — needs re-confirming.", validFrom: daysAgo(70),
+      validUntil: null, postedById: ids.nusrat, postedByName: "Nusrat Jahan",
+      lastConfirmedAt: daysAgo(65),
+    },
+  });
+  await prisma.deal.create({
+    data: {
+      bookmarkId: bookmarkIds.shwapno, title: "Eid week 15% off (finished)",
+      validFrom: daysAgo(60), validUntil: daysAgo(30),
+      postedById: ids.tanvir, postedByName: "Tanvir Hasan",
+    },
+  });
+
+  await prisma.dealReport.createMany({
+    data: [
+      { dealId: dealActive.id, reportedById: ids.tanvir, verdict: "STILL_THERE", createdAt: daysAgo(2) },
+      { dealId: dealActive.id, reportedById: ids.nusrat, verdict: "STILL_THERE", createdAt: daysAgo(1) },
+    ],
+  });
+  console.log("  17 places, 5 notes, 5 confirmations, 4 deals (active / expiring / open-ended / expired)");
+
+  /* ── M2.1 deeper wallet ───────────────────────────────────────────────── */
+
+  console.log("Deepening the shared wallet (M2.1)…");
+
+  // A custom (non-equal) split, because EQUAL alone never exercises the ratio
+  // path the brief asks for.
+  await prisma.expense.create({
+    data: {
+      houseId: houseIds.bashundhara, createdById: ids.nusrat, paidById: ids.nusrat,
+      title: "Internet — August", description: "Tanvir works from home, so he takes the larger share.",
+      amount: 1800, category: "UTILITIES", splitMethod: "CUSTOM", spentOn: daysAgo(10),
+      shares: {
+        create: [
+          { userId: ids.nusrat, amount: 700, status: "PAID", settledAt: daysAgo(10) },
+          { userId: ids.tanvir, amount: 1100 },
+        ],
+      },
+    },
+  });
+
+  // A waived share — forgiven by the house admin, the third ShareStatus.
+  await prisma.expense.create({
+    data: {
+      houseId: houseIds.bashundhara, createdById: ids.nusrat, paidById: ids.nusrat,
+      title: "Eid cleaning service", amount: 1200, category: "OTHER",
+      splitMethod: "EQUAL", spentOn: daysAgo(25),
+      shares: {
+        create: [
+          { userId: ids.nusrat, amount: 600, status: "PAID", settledAt: daysAgo(25) },
+          { userId: ids.tanvir, amount: 600, status: "WAIVED", settledAt: daysAgo(20) },
+        ],
+      },
+    },
+  });
+
+  const gas = await prisma.expense.create({
+    data: {
+      houseId: houseIds.bashundhara, createdById: ids.tanvir, paidById: ids.tanvir,
+      title: "Gas cylinder refill", amount: 1500, category: "UTILITIES",
+      splitMethod: "EQUAL", spentOn: daysAgo(2),
+      shares: {
+        create: [
+          { userId: ids.tanvir, amount: 750, status: "PAID", settledAt: daysAgo(2) },
+          { userId: ids.nusrat, amount: 750 },
+        ],
+      },
+    },
+    include: { shares: true },
+  });
+
+  // A failed attempt, so the payment history is not uniformly successful —
+  // and so the "retry after a failure" path has something behind it.
+  await prisma.payment.create({
+    data: {
+      userId: ids.nusrat, houseId: houseIds.bashundhara,
+      expenseShareId: gas.shares.find((s) => s.userId === ids.nusrat)!.id,
+      provider: "STRIPE", status: "FAILED", amount: 750, currency: "BDT",
+      providerPaymentId: `demo-stripe-failed-${Date.now()}`, createdAt: daysAgo(1),
+    },
+  });
+  console.log("  3 more expenses (custom split, waived share, unpaid), 1 failed payment");
+
+  /* ── M3.1 fuller ticket board ─────────────────────────────────────────── */
+
+  console.log("Adding maintenance tickets (M3.1)…");
+  const urgent = await prisma.maintenanceTicket.create({
+    data: {
+      houseId: houseIds.bashundhara, reportedById: ids.tanvir, assignedToId: ids.miftelul,
+      title: "No water in the second-floor bathroom", description: "Nothing from the tap since this morning.",
+      category: "Plumbing", status: "OPEN", priority: "URGENT", createdAt: daysAgo(1),
+    },
+  });
+  await prisma.maintenanceTicketEvent.create({
+    data: { ticketId: urgent.id, actorId: ids.tanvir, toStatus: "OPEN", note: "Reported" },
+  });
+
+  const closed = await prisma.maintenanceTicket.create({
+    data: {
+      houseId: houseIds.bashundhara, reportedById: ids.nusrat, title: "Front door lock sticking",
+      description: "Key needed jiggling; locksmith came out.", category: "Hardware",
+      status: "OPEN", priority: "LOW", createdAt: daysAgo(30),
+    },
+  });
+  for (const [from, to, note] of [
+    ["OPEN", "IN_PROGRESS", "Locksmith booked"],
+    ["IN_PROGRESS", "RESOLVED", "Lock replaced"],
+    ["RESOLVED", "CLOSED", "Confirmed working by the house"],
+  ] as const) {
+    await prisma.$transaction([
+      prisma.maintenanceTicket.update({ where: { id: closed.id }, data: { status: to } }),
+      prisma.maintenanceTicketEvent.create({
+        data: { ticketId: closed.id, actorId: ids.miftelul, fromStatus: from, toStatus: to, note },
+      }),
+    ]);
+  }
+  console.log("  2 more tickets — all four statuses and all four priorities now present");
+
+  /* ── M2.3 meals (Araf) and M3.4 chores (Mahia) — data only ────────────── */
+
+  console.log("Adding meal attendance and chore rotation demo data…");
+  const dateOnly = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+
+  for (const [offset, type, cost] of [
+    [0, "LUNCH", 110], [0, "DINNER", 95],
+    [1, "LUNCH", 120], [1, "DINNER", 100],
+  ] as const) {
+    const meal = await prisma.meal.create({
+      data: {
+        houseId: houseIds.bashundhara, mealDate: dateOnly(inDays(offset)),
+        mealType: type, costPerHead: cost, locksAt: inDays(offset),
+      },
+    });
+    // headcount is recalculated by the recalc_meal_headcount trigger.
+    await prisma.mealAttendance.createMany({
+      data: [
+        { mealId: meal.id, userId: ids.nusrat, status: "ATTENDING" },
+        { mealId: meal.id, userId: ids.tanvir, status: offset === 1 && type === "DINNER" ? "SKIPPING" : "ATTENDING" },
+      ],
+    });
+  }
+
+  const rotation = [ids.nusrat, ids.tanvir];
+  for (const [name, description, frequency, idx] of [
+    ["Kitchen deep clean", "Counters, stove, sink and floor.", "WEEKLY", 0],
+    ["Bathroom clean", "Both bathrooms, including the drains.", "WEEKLY", 1],
+    ["Grocery run", "Weekly staples from the kacha bazar.", "WEEKLY", 0],
+  ] as const) {
+    const chore = await prisma.chore.create({
+      data: {
+        houseId: houseIds.bashundhara, name, description, frequency,
+        rotationOrder: rotation, lastAssignedIndex: idx,
+      },
+    });
+    await prisma.choreAssignment.createMany({
+      data: [
+        { choreId: chore.id, userId: rotation[idx], dueDate: dateOnly(inDays(3)), status: "PENDING" },
+        { choreId: chore.id, userId: rotation[1 - idx], dueDate: dateOnly(daysAgo(4)), status: "COMPLETED", completedAt: daysAgo(4) },
+      ],
+    });
+  }
+  console.log("  4 meals with attendance, 3 chores with rotation and assignments");
 
   console.log(`\nDone. Password for every account is ${PASSWORD}\n`);
   for (const p of PEOPLE) {

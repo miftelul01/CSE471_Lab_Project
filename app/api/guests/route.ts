@@ -1,11 +1,16 @@
 import { badRequest, notFound, ok, withUser, readJson, missingFields, fromPrismaError } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
-import { assertHouseMember } from "@/lib/authz";
+import { assertHouseMember, isHouseAdmin } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 
 /** M1.3 Guest Registration & Accountability Log — Md. Mahidul Alam Araf. */
 
 export const dynamic = "force-dynamic";
+
+/** Postgres `text` accepts any size; the log stays readable only if we don't. */
+const MAX_GUEST_NAME = 120;
+const MAX_GUEST_PHONE = 32;
+const MAX_PURPOSE = 500;
 
 export const GET = withUser(async (user) => {
   const houseId = await getActiveHouseId(user.id);
@@ -38,11 +43,32 @@ export const POST = withUser(async (user, req: Request) => {
   const missing = missingFields(body, ["guestName"]);
   if (missing.length > 0) return badRequest(`Missing fields: ${missing.join(", ")}`);
 
+  const guestName = String(body.guestName).trim();
+  if (!guestName) return badRequest("Give the guest a name.");
+  if (guestName.length > MAX_GUEST_NAME) {
+    return badRequest(`Guest name must be ${MAX_GUEST_NAME} characters or fewer.`);
+  }
+
+  const guestPhone = body.guestPhone?.toString().trim() || null;
+  if (guestPhone && guestPhone.length > MAX_GUEST_PHONE) {
+    return badRequest(`Phone must be ${MAX_GUEST_PHONE} characters or fewer.`);
+  }
+
+  const purpose = body.purpose?.toString().trim() || null;
+  if (purpose && purpose.length > MAX_PURPOSE) {
+    return badRequest(`Purpose must be ${MAX_PURPOSE} characters or fewer.`);
+  }
+
   let expectedCheckOut: Date | null = null;
   if (body.expectedCheckOut) {
     expectedCheckOut = new Date(body.expectedCheckOut);
     if (Number.isNaN(expectedCheckOut.getTime())) {
       return badRequest("expectedCheckOut is not a valid date.");
+    }
+    // A checkout already in the past means the form was misread; the entry
+    // would show up permanently overdue on the log.
+    if (expectedCheckOut.getTime() < Date.now()) {
+      return badRequest("Expected check-out can't be in the past.");
     }
   }
 
@@ -56,9 +82,9 @@ export const POST = withUser(async (user, req: Request) => {
       data: {
         houseId,
         hostUserId: user.id,
-        guestName: body.guestName,
-        guestPhone: body.guestPhone ?? null,
-        purpose: body.purpose ?? null,
+        guestName,
+        guestPhone,
+        purpose,
         expectedCheckOut,
         status: "CHECKED_IN",
         notifiedAdminAt: new Date(),
@@ -94,7 +120,7 @@ export const PATCH = withUser(async (user, req: Request) => {
   // Verify the guest belongs to this house
   const existing = await prisma.guestLog.findUnique({
     where: { id: guestId },
-    select: { houseId: true, status: true },
+    select: { houseId: true, status: true, hostUserId: true },
   });
   if (!existing) return notFound("No such guest log entry.");
   if (existing.houseId !== houseId) {
@@ -102,6 +128,29 @@ export const PATCH = withUser(async (user, req: Request) => {
   }
   if (existing.status !== "CHECKED_IN") {
     return badRequest(`Guest is already ${existing.status}.`);
+  }
+
+  /**
+   * Checking a guest out is open to the whole house — whoever is in when the
+   * visitor leaves should be able to log it, and it leaves the visit on the
+   * record either way.
+   *
+   * Cancelling is not. CANCELLED is the state that says the visit never
+   * happened, and M1.3 exists to be a permanent accountability log. Letting
+   * any resident erase somebody else's guest — with no event trail on the row
+   * to show who did it — would make the log worth exactly as much as the least
+   * trustworthy person with an account.
+   */
+  if (status === "CANCELLED") {
+    const permitted =
+      existing.hostUserId === user.id ||
+      user.profile.role === "ADMIN" ||
+      (await isHouseAdmin(user.id, houseId));
+    if (!permitted) {
+      return badRequest(
+        "Only whoever logged this guest, or your house admin, can cancel the entry. You can check them out instead."
+      );
+    }
   }
 
   try {

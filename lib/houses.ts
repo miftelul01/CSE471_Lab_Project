@@ -80,6 +80,31 @@ export async function admitToHouse(
   role: UserRole = "RESIDENT",
   status: "ACTIVE" | "PENDING" = "ACTIVE"
 ) {
+  /**
+   * An existing membership is never downgraded by a re-admission.
+   *
+   * This used to upsert with `update: { status }` unconditionally, so an
+   * already-ACTIVE member who submitted the join form with their own house id
+   * — the id is printed on the Houses page, so this is an easy thing to do —
+   * was silently demoted to PENDING. Every house-scoped query filters on
+   * ACTIVE, so they instantly lost the wallet, meals, menu, guest log and
+   * neighbourhood map, and there is no in-app way to approve a pending member
+   * back. A flat head doing it took the flat's only resident admin with them.
+   *
+   * Re-joining is only meaningful for someone who actually left.
+   */
+  const existing = await tx.houseMember.findUnique({
+    where: { houseId_userId: { houseId, userId } },
+    select: { status: true },
+  });
+
+  if (existing && existing.status !== "LEFT") {
+    return tx.houseMember.update({
+      where: { houseId_userId: { houseId, userId } },
+      data: {},
+    });
+  }
+
   const existingFlatAdmin = await tx.houseMember.findFirst({
     where: { houseId, status: "ACTIVE", isHouseAdmin: true, role: "RESIDENT" },
     select: { id: true },
@@ -92,6 +117,9 @@ export async function admitToHouse(
   return tx.houseMember.upsert({
     where: { houseId_userId: { houseId, userId } },
     create: { houseId, userId, role, status, isHouseAdmin: isFirstResident },
-    update: { status },
+    // Only reachable for a membership that ended: someone rejoining a house
+    // they left. leftAt is cleared so the M2.4 purge of their private
+    // bookmarks stops counting down.
+    update: { status, leftAt: null },
   });
 }

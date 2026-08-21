@@ -42,6 +42,7 @@ export const notImplemented = (feature: string) =>
  * AuthzError already does this for 403/404. This is the same idea for the
  * cases that aren't about permission — "that meal is already locked" is a 400,
  * and throwing a bare Error for it turns a user mistake into a 500.
+ *
  * 429 and 503 were added for the M2.4 map proxies: being over your hourly
  * budget, or a provider being down, are both things the caller can act on
  * (wait, or fall back to the straight-line distance) and neither is our bug.

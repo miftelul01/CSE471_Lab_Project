@@ -106,6 +106,9 @@ const MEMBER_NAV: NavGroup[] = [
       { label: "Find a room", href: "/listings", icon: "search" },
       { label: "Rooms in flats", href: "/roommates", icon: "guest" },
       { label: "Roommate matching", href: "/matches", icon: "match" },
+      // "Listings map", not "Map": M3.3 plots rooms for rent for people who
+      // don't live here yet. The household's own map of the neighbourhood is
+      // M2.4, under My flat, and the two must not be confused for each other.
       { label: "Listings map", href: "/map", icon: "map" },
       { label: "Messages", href: "/messages", icon: "message" },
     ],
