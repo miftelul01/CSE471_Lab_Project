@@ -130,11 +130,43 @@ enum ShareStatus {
   WAIVED
 }
 
-enum ProposalStatus {
-  DRAFT
+/// A resident's own hard dietary restrictions (User.dietaryRestrictions) and
+/// what a DayProposal declares itself compatible with (DayProposal.dietaryTags)
+/// — same tag set used on both sides so they can be compared directly.
+enum DietaryTag {
+  VEGETARIAN
+  VEGAN
+  HALAL
+  NO_BEEF
+  NO_PORK
+  NUT_FREE
+  DAIRY_FREE
+}
+
+/// Self-declared by the proposer — no external nutrition-calculation API.
+enum NutritionProfile {
+  LIGHT
+  BALANCED
+  PROTEIN_HEAVY
+}
+
+/// Lifecycle of one day's ranked-choice vote (M2.2) — see lib/menu.ts
+/// advanceDailyVote, the lazy sweep that walks a DailyMealResult through
+/// this state machine.
+enum DailyVoteStatus {
   OPEN
-  APPROVED
-  REJECTED
+  TIE_RUNOFF
+  EMERGENCY_REVOTE
+  DECIDED
+  FALLBACK
+}
+
+/// Which round a DailyBallot belongs to — a resident may cast one ballot per
+/// (result, round).
+enum VoteRound {
+  MAIN
+  TIE_RUNOFF
+  EMERGENCY
 }
 
 enum MealType {
@@ -281,7 +313,8 @@ model User {
   /// Cumulative penalty from upheld post-move-in profile complaints (Mess
   /// Court). Dampens this user's future compatibility scores. See
   /// lib/matching.ts and app/api/admin/disputes/uphold/route.ts.
-  matchRatingPenalty Int @default(0) @map("match_rating_penalty")
+  matchRatingPenalty  Int          @default(0) @map("match_rating_penalty")
+  dietaryRestrictions DietaryTag[] @map("dietary_restrictions")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -302,9 +335,11 @@ model User {
   expensesPaid         Expense[]                @relation("ExpensePayer")
   expenseShares        ExpenseShare[]
   expenseShareEvents   ExpenseShareEvent[]
-  menuProposals        MenuProposal[]
-  menuVotes            MenuVote[]
+  dayProposals         DayProposal[]
+  dailyBallots         DailyBallot[]
   mealAttendance       MealAttendance[]
+  mealRatings          MealRating[]
+  menuTemplatesCreated MenuTemplate[]
   ticketsReported      MaintenanceTicket[]      @relation("TicketReporter")
   ticketsAssigned      MaintenanceTicket[]      @relation("TicketAssignee")
   ticketEvents         MaintenanceTicketEvent[]
@@ -325,6 +360,7 @@ model User {
   dealsPosted          Deal[]
   dealReports          DealReport[]
   houseMapPinsSet      House[]                  @relation("HouseMapPinSetter")
+  savedCommuteSearches SavedCommuteSearch[]
 
   matchRequestsSent     RoommateMatchRequest[] @relation("MatchRequestSender")
   matchRequestsReceived RoommateMatchRequest[] @relation("MatchRequestReceiver")
@@ -385,48 +421,42 @@ model VerificationToken {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model House {
-  id            String    @id @default(uuid())
-  name          String
-  address       String
-  area          String?
-  /// The house origin point — every distance and route in M2.4 is measured
-  /// from here. Seeded from the Module 1 listing coordinates when the house
-  /// came from a listing, otherwise dropped by the house admin during setup.
-  ///
-  /// These are the same two columns the rest of the app already used for "where
-  /// the house is"; M2.4 deliberately does not add a second pair. Two coordinate
-  /// columns for one building would eventually disagree, and there is no honest
-  /// way to decide which one a distance should be measured from.
-  latitude      Float?
-  longitude     Float?
-  /// Stamped when a human deliberately confirmed the pin, which is not the same
-  /// as coordinates merely existing: a listing's lat/lng may point at the
-  /// building's street rather than its gate. Until this is set, M2.4 keeps
-  /// distance and routing switched off and asks the admin to place the pin.
-  mapPinSetAt   DateTime? @map("map_pin_set_at")
-  mapPinSetById String?   @map("map_pin_set_by")
+  id               String    @id @default(uuid())
+  name             String
+  address          String
+  area             String?
+  latitude         Float?
+  longitude        Float?
+  mapPinSetAt      DateTime? @map("map_pin_set_at")
+  mapPinSetById    String?   @map("map_pin_set_by")
+  landlordId       String?   @map("landlord_id")
+  googleCalendarId String?   @map("google_calendar_id")
 
-  landlordId       String?  @map("landlord_id")
-  googleCalendarId String?  @map("google_calendar_id")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  /// Terminal fallback for a day's meal vote (M2.2) when there's no previous
+  /// week's winner to fall back to either. Set by the house admin.
+  defaultSafeMeal String? @map("default_safe_meal")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   landlord    User? @relation("HouseLandlord", fields: [landlordId], references: [id], onDelete: SetNull)
   mapPinSetBy User? @relation("HouseMapPinSetter", fields: [mapPinSetById], references: [id], onDelete: SetNull)
 
-  members        HouseMember[]
-  listings       Listing[]
-  roommatePosts  RoommatePost[]
-  guestLogs      GuestLog[]
-  expenses       Expense[]
-  menuProposals  MenuProposal[]
-  meals          Meal[]
-  tickets        MaintenanceTicket[]
-  payments       Payment[]
-  chores         Chore[]
-  disputes       Dispute[]
-  calendarEvents CalendarEvent[]
-  bookmarks      Bookmark[]
+  members          HouseMember[]
+  listings         Listing[]
+  roommatePosts    RoommatePost[]
+  guestLogs        GuestLog[]
+  expenses         Expense[]
+  dayProposals     DayProposal[]
+  dailyMealResults DailyMealResult[]
+  menuTemplates    MenuTemplate[]
+  meals            Meal[]
+  tickets          MaintenanceTicket[]
+  payments         Payment[]
+  chores           Chore[]
+  disputes         Dispute[]
+  calendarEvents   CalendarEvent[]
+  bookmarks        Bookmark[]
 
   @@index([landlordId])
   @@map("houses")
@@ -460,34 +490,34 @@ model HouseMember {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Listing {
-  id            String            @id @default(uuid())
-  landlordId    String            @map("landlord_id")
-  houseId       String?           @map("house_id")
-  title         String
-  description   String            @default("")
-  rent          Decimal           @db.Decimal(10, 2)
-  area          String
-  address       String?
-  roomType      RoomType          @default(SINGLE) @map("room_type")
-  capacity      Int               @default(1)
-  amenities     String[]          @default([])
-  latitude      Float?
-  longitude     Float?
-  isActive      Boolean           @default(true) @map("is_active")
+  id               String         @id @default(uuid())
+  landlordId       String         @map("landlord_id")
+  houseId          String?        @map("house_id")
+  title            String
+  description      String         @default("")
+  rent             Decimal        @db.Decimal(10, 2)
+  area             String
+  address          String?
+  roomType         RoomType       @default(SINGLE) @map("room_type")
+  capacity         Int            @default(1)
+  amenities        String[]       @default([])
+  latitude         Float?
+  longitude        Float?
+  isActive         Boolean        @default(true) @map("is_active")
   /// Moderation is separate from isActive: a landlord delists their own room,
   /// a system administrator removes one that breaks the rules.
-  status        PostStatus        @default(PUBLISHED)
-  removedReason String?           @map("removed_reason")
-  removedAt     DateTime?         @map("removed_at")
-  removedById   String?           @map("removed_by")
-  sleepSchedule SleepSchedule?    @map("sleep_schedule")
+  status           PostStatus     @default(PUBLISHED)
+  removedReason    String?        @map("removed_reason")
+  removedAt        DateTime?      @map("removed_at")
+  removedById      String?        @map("removed_by")
+  sleepSchedule    SleepSchedule? @map("sleep_schedule")
   /// 1 (relaxed) - 5 (very tidy) — same scale as Preference.cleanlinessLevel
   /// so the matching engine compares like-for-like.
   cleanlinessLevel Int?           @map("cleanliness_level")
-  allowsSmoking Boolean?          @map("allows_smoking")
-  allowsPets    Boolean?          @map("allows_pets")
-  createdAt     DateTime          @default(now()) @map("created_at")
-  updatedAt     DateTime          @updatedAt @map("updated_at")
+  allowsSmoking    Boolean?       @map("allows_smoking")
+  allowsPets       Boolean?       @map("allows_pets")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
 
   landlord  User   @relation(fields: [landlordId], references: [id], onDelete: Cascade)
   house     House? @relation(fields: [houseId], references: [id], onDelete: SetNull)
@@ -510,18 +540,18 @@ model Listing {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Preference {
-  userId        String           @id @map("user_id")
-  budgetMin     Decimal          @map("budget_min") @db.Decimal(10, 2)
-  budgetMax     Decimal          @map("budget_max") @db.Decimal(10, 2)
-  sleepSchedule SleepSchedule    @map("sleep_schedule")
+  userId           String        @id @map("user_id")
+  budgetMin        Decimal       @map("budget_min") @db.Decimal(10, 2)
+  budgetMax        Decimal       @map("budget_max") @db.Decimal(10, 2)
+  sleepSchedule    SleepSchedule @map("sleep_schedule")
   /// 1 (relaxed) - 5 (very tidy).
   cleanlinessLevel Int           @map("cleanliness_level")
   /// 1 (needs quiet) - 5 (tolerates a lot of noise).
   noiseTolerance   Int           @map("noise_tolerance")
-  guestPolicy   GuestPolicy      @default(OCCASIONALLY) @map("guest_policy")
-  smokingOk     Boolean          @default(false) @map("smoking_ok")
-  petsOk        Boolean          @default(false) @map("pets_ok")
-  preferredArea String?          @map("preferred_area")
+  guestPolicy      GuestPolicy   @default(OCCASIONALLY) @map("guest_policy")
+  smokingOk        Boolean       @default(false) @map("smoking_ok")
+  petsOk           Boolean       @default(false) @map("pets_ok")
+  preferredArea    String?       @map("preferred_area")
 
   // Custom Preference Weighting — importance the resident assigns to each
   // factor, so scoring reflects personal dealbreakers rather than a flat
@@ -534,8 +564,8 @@ model Preference {
   smokingWeight     PreferenceWeight @default(MEDIUM) @map("smoking_weight")
   petsWeight        PreferenceWeight @default(MEDIUM) @map("pets_weight")
 
-  createdAt     DateTime         @default(now()) @map("created_at")
-  updatedAt     DateTime         @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -622,8 +652,8 @@ model Message {
   createdAt   DateTime  @default(now()) @map("created_at")
   readAt      DateTime? @map("read_at")
 
-  sender    User    @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
-  recipient User    @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  sender    User     @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User     @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
   listing   Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   @@index([senderId, recipientId, createdAt])
@@ -646,13 +676,13 @@ model UserBlock {
 }
 
 model Report {
-  id         String            @id @default(uuid())
-  reporterId String            @map("reporter_id")
-  targetType ReportTargetType  @map("target_type")
-  targetId   String            @map("target_id")
+  id         String           @id @default(uuid())
+  reporterId String           @map("reporter_id")
+  targetType ReportTargetType @map("target_type")
+  targetId   String           @map("target_id")
   reason     String
-  status     ReportStatus      @default(OPEN)
-  createdAt  DateTime          @default(now()) @map("created_at")
+  status     ReportStatus     @default(OPEN)
+  createdAt  DateTime         @default(now()) @map("created_at")
 
   reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
 
@@ -664,14 +694,14 @@ model Report {
 /// badge — a self-attestation with a human review trail, not a live
 /// SMS/ID-provider integration. Latest VERIFIED row for a user = badge shown.
 model VerificationRequest {
-  id           String              @id @default(uuid())
-  userId       String              @map("user_id")
+  id           String             @id @default(uuid())
+  userId       String             @map("user_id")
   phone        String?
   note         String?
-  status       VerificationStatus  @default(PENDING)
-  reviewedById String?             @map("reviewed_by")
-  reviewedAt   DateTime?           @map("reviewed_at")
-  createdAt    DateTime            @default(now()) @map("created_at")
+  status       VerificationStatus @default(PENDING)
+  reviewedById String?            @map("reviewed_by")
+  reviewedAt   DateTime?          @map("reviewed_at")
+  createdAt    DateTime           @default(now()) @map("created_at")
 
   user       User  @relation("VerificationSubject", fields: [userId], references: [id], onDelete: Cascade)
   reviewedBy User? @relation("VerificationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
@@ -798,56 +828,147 @@ model ExpenseShareEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M2.2 Weekly Menu Proposal & Voting — Mahia Tanzin
+// M2.2 Daily Meal Proposal & Ranked-Choice Voting — Mahia Tanzin
+//
+// Voting granularity is per DAY, not per day+meal-type: one DayProposal is
+// one resident's candidate menu for one specific day (optionally covering
+// any subset of breakfast/lunch/dinner), and every resident's candidate for
+// that day competes in that day's independent Instant-Runoff ballot. See
+// lib/menu.ts for the tally/tie-break/lazy state-machine algorithm.
 // ─────────────────────────────────────────────────────────────────────────────
 
-model MenuProposal {
-  id             String         @id @default(uuid())
-  houseId        String         @map("house_id")
-  proposedById   String         @map("proposed_by")
-  title          String
-  weekStartDate  DateTime       @map("week_start_date") @db.Date
-  status         ProposalStatus @default(OPEN)
-  votingClosesAt DateTime?      @map("voting_closes_at")
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
+model DayProposal {
+  id            String   @id @default(uuid())
+  houseId       String   @map("house_id")
+  proposedById  String   @map("proposed_by")
+  // Monday of the target week; dayOfWeek 0-6 (Mon=0) selects the day within it.
+  weekStartDate DateTime @map("week_start_date") @db.Date
+  dayOfWeek     Int      @map("day_of_week") @db.SmallInt
+
+  // Any subset may be filled — a candidate can propose e.g. only lunch & dinner.
+  breakfast String?
+  lunch     String?
+  dinner    String?
+
+  estimatedCostPerHead Decimal?          @map("estimated_cost_per_head") @db.Decimal(10, 2)
+  nutritionProfile     NutritionProfile? @map("nutrition_profile")
+  dietaryTags          DietaryTag[]      @map("dietary_tags")
+
+  sourceTemplateId String?       @map("source_template_id")
+  sourceTemplate   MenuTemplate? @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)
+
+  // Withdrawing keeps the row (existing ballots reference it) but excludes it
+  // from tallying and frees the proposer to submit a new candidate for that
+  // day — enforced by a partial unique index (WHERE withdrawn_at IS NULL) in
+  // migration.sql, the same pattern as join_requests_one_open_per_listing.
+  withdrawnAt DateTime? @map("withdrawn_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   house      House @relation(fields: [houseId], references: [id], onDelete: Cascade)
   proposedBy User  @relation(fields: [proposedById], references: [id], onDelete: Cascade)
 
-  items MenuProposalItem[]
-  votes MenuVote[]
-  meals Meal[]
+  rankings         DailyBallotRanking[]
+  meals            Meal[]
+  dailyMealResults DailyMealResult[]
 
-  @@index([houseId, weekStartDate(sort: Desc)])
-  @@map("menu_proposals")
+  @@index([houseId, weekStartDate, dayOfWeek])
+  @@map("day_proposals")
 }
 
-model MenuProposalItem {
-  id          String   @id @default(uuid())
-  proposalId  String   @map("proposal_id")
-  dayOfWeek   Int      @map("day_of_week") @db.SmallInt
-  mealType    MealType @map("meal_type")
-  description String
+/// One row per (house, week, day) — the state-machine instance a lazy sweep
+/// (advanceDailyVote in lib/menu.ts) advances through OPEN -> [extended] ->
+/// DECIDED / TIE_RUNOFF -> DECIDED / FALLBACK, or -> EMERGENCY_REVOTE ->
+/// DECIDED / FALLBACK.
+model DailyMealResult {
+  id            String   @id @default(uuid())
+  houseId       String   @map("house_id")
+  weekStartDate DateTime @map("week_start_date") @db.Date
+  dayOfWeek     Int      @map("day_of_week") @db.SmallInt
 
-  proposal MenuProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  status            DailyVoteStatus @default(OPEN)
+  winningProposalId String?         @map("winning_proposal_id")
+  fallbackReason    String?         @map("fallback_reason")
 
-  @@unique([proposalId, dayOfWeek, mealType])
-  @@map("menu_proposal_items")
+  // 12h quorum extension deadline (OPEN phase only).
+  extendedUntil   DateTime? @map("extended_until")
+  // Candidates still tied entering TIE_RUNOFF.
+  tieCandidateIds String[]  @map("tie_candidate_ids")
+  // Deadline for whichever non-OPEN timed round is currently active
+  // (TIE_RUNOFF's 6h window or EMERGENCY_REVOTE's 3h window).
+  roundDeadline   DateTime? @map("round_deadline")
+  emergencyReason String?   @map("emergency_reason")
+
+  decidedAt DateTime? @map("decided_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  house           House        @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  winningProposal DayProposal? @relation(fields: [winningProposalId], references: [id], onDelete: SetNull, map: "daily_meal_results_winning_proposal_fkey")
+
+  ballots DailyBallot[]
+
+  @@unique([houseId, weekStartDate, dayOfWeek])
+  @@map("daily_meal_results")
 }
 
-model MenuVote {
-  id         String   @id @default(uuid())
-  proposalId String   @map("proposal_id")
-  userId     String   @map("user_id")
-  vote       Int      @db.SmallInt
-  createdAt  DateTime @default(now()) @map("created_at")
+/// A ranked ballot header — one per resident per day per round (MAIN, or the
+/// smaller TIE_RUNOFF/EMERGENCY re-vote pools).
+model DailyBallot {
+  id       String    @id @default(uuid())
+  resultId String    @map("result_id")
+  voterId  String    @map("voter_id")
+  round    VoteRound @default(MAIN)
 
-  proposal MenuProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
-  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([proposalId, userId])
-  @@map("menu_votes")
+  result   DailyMealResult      @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  voter    User                 @relation(fields: [voterId], references: [id], onDelete: Cascade)
+  rankings DailyBallotRanking[]
+
+  @@unique([resultId, voterId, round])
+  @@map("daily_ballots")
+}
+
+model DailyBallotRanking {
+  id         String @id @default(uuid())
+  ballotId   String @map("ballot_id")
+  proposalId String @map("proposal_id")
+  rank       Int    @db.SmallInt
+
+  ballot   DailyBallot @relation(fields: [ballotId], references: [id], onDelete: Cascade)
+  proposal DayProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([ballotId, proposalId])
+  @@unique([ballotId, rank])
+  @@map("daily_ballot_rankings")
+}
+
+/// A resident's saved candidate for quick reuse in a future day's submission.
+model MenuTemplate {
+  id          String @id @default(uuid())
+  houseId     String @map("house_id")
+  createdById String @map("created_by")
+  name        String
+
+  breakfast String?
+  lunch     String?
+  dinner    String?
+
+  estimatedCostPerHead Decimal?          @map("estimated_cost_per_head") @db.Decimal(10, 2)
+  nutritionProfile     NutritionProfile? @map("nutrition_profile")
+  dietaryTags          DietaryTag[]      @map("dietary_tags")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  house     House         @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  createdBy User          @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  proposals DayProposal[]
+
+  @@index([houseId])
+  @@map("menu_templates")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -855,21 +976,22 @@ model MenuVote {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Meal {
-  id             String    @id @default(uuid())
-  houseId        String    @map("house_id")
-  mealDate       DateTime  @map("meal_date") @db.Date
-  mealType       MealType  @map("meal_type")
-  menuProposalId String?   @map("menu_proposal_id")
-  costPerHead    Decimal?  @map("cost_per_head") @db.Decimal(10, 2)
-  headcount      Int       @default(0)
-  locksAt        DateTime? @map("locks_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  id            String    @id @default(uuid())
+  houseId       String    @map("house_id")
+  mealDate      DateTime  @map("meal_date") @db.Date
+  mealType      MealType  @map("meal_type")
+  dayProposalId String?   @map("day_proposal_id")
+  costPerHead   Decimal?  @map("cost_per_head") @db.Decimal(10, 2)
+  headcount     Int       @default(0)
+  locksAt       DateTime? @map("locks_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  house        House         @relation(fields: [houseId], references: [id], onDelete: Cascade)
-  menuProposal MenuProposal? @relation(fields: [menuProposalId], references: [id], onDelete: SetNull)
+  house       House        @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  dayProposal DayProposal? @relation(fields: [dayProposalId], references: [id], onDelete: SetNull)
 
   attendance MealAttendance[]
+  ratings    MealRating[]
   expense    Expense?
 
   @@unique([houseId, mealDate, mealType])
@@ -890,6 +1012,22 @@ model MealAttendance {
 
   @@unique([mealId, userId])
   @@map("meal_attendance")
+}
+
+/// Post-meal satisfaction (scoped enhancement) — a resident may rate a meal
+/// once it has happened (Meal.locksAt has passed).
+model MealRating {
+  id        String   @id @default(uuid())
+  mealId    String   @map("meal_id")
+  userId    String   @map("user_id")
+  stars     Int      @db.SmallInt
+  createdAt DateTime @default(now()) @map("created_at")
+
+  meal Meal @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([mealId, userId])
+  @@map("meal_ratings")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1083,6 +1221,49 @@ model MapApiCall {
 
   @@index([userId, createdAt])
   @@map("map_api_calls")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3.3 Listings Map & Commute Evaluation — Mahia Tanzin
+//
+// Property discovery for people who do NOT live here yet — plots the `listings`
+// table on a map with a commute-distance helper. Distinct from M2.4 above (the
+// household's own private knowledge base of places it already uses): this one
+// is a public shop window, that one is private operational knowledge. Neither
+// reads nor writes the other's tables.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A resident's saved commute preference — the persistence "saved search
+/// radius alerts" actually needs. Everything else in this module (multi-origin
+/// comparison, commute-based filtering) is request-time computation with no
+/// table of its own. `lastViewedAt` is what makes "alert me to new matches"
+/// work without a notification system (none exists anywhere in this app): the
+/// saved-searches page computes "listings newer than this that still match"
+/// live on load, the same lazy-evaluation pattern as lib/joinRequests.ts and
+/// lib/menu.ts, then bumps this forward.
+model SavedCommuteSearch {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  label  String
+
+  originAddress String @map("origin_address")
+  originLat     Float  @map("origin_lat")
+  originLng     Float  @map("origin_lng")
+
+  maxCommuteMinutes Int    @map("max_commute_minutes")
+  /// "driving-car" | "foot-walking" — same RouteProfile values M2.4 already
+  /// uses (lib/neighborhood.ts), kept as a plain string rather than an enum
+  /// shared across modules so M2.4 can extend its own profile list without a
+  /// migration touching this table.
+  mode              String
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastViewedAt DateTime @default(now()) @map("last_viewed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("saved_commute_searches")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1316,25 +1497,25 @@ model CalendarEvent {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model RoommatePost {
-  id             String            @id @default(uuid())
-  houseId        String            @map("house_id")
-  postedById     String            @map("posted_by")
-  title          String
-  description    String            @default("")
-  monthlyShare   Decimal           @map("monthly_share") @db.Decimal(10, 2)
-  seatsAvailable Int               @default(1) @map("seats_available")
-  availableFrom  DateTime?         @map("available_from") @db.Date
-  sleepSchedule  SleepSchedule?    @map("sleep_schedule")
-  cleanlinessLevel Int?            @map("cleanliness_level")
-  smokingOk      Boolean?          @map("smoking_ok")
-  petsOk         Boolean?          @map("pets_ok")
-  isActive       Boolean           @default(true) @map("is_active")
-  status         PostStatus        @default(PUBLISHED)
-  removedReason  String?           @map("removed_reason")
-  removedAt      DateTime?         @map("removed_at")
-  removedById    String?           @map("removed_by")
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @updatedAt @map("updated_at")
+  id               String         @id @default(uuid())
+  houseId          String         @map("house_id")
+  postedById       String         @map("posted_by")
+  title            String
+  description      String         @default("")
+  monthlyShare     Decimal        @map("monthly_share") @db.Decimal(10, 2)
+  seatsAvailable   Int            @default(1) @map("seats_available")
+  availableFrom    DateTime?      @map("available_from") @db.Date
+  sleepSchedule    SleepSchedule? @map("sleep_schedule")
+  cleanlinessLevel Int?           @map("cleanliness_level")
+  smokingOk        Boolean?       @map("smoking_ok")
+  petsOk           Boolean?       @map("pets_ok")
+  isActive         Boolean        @default(true) @map("is_active")
+  status           PostStatus     @default(PUBLISHED)
+  removedReason    String?        @map("removed_reason")
+  removedAt        DateTime?      @map("removed_at")
+  removedById      String?        @map("removed_by")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
 
   house     House @relation(fields: [houseId], references: [id], onDelete: Cascade)
   postedBy  User  @relation("RoommatePoster", fields: [postedById], references: [id], onDelete: Cascade)

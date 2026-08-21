@@ -22,6 +22,8 @@ import {
 } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
+import { mondayOf } from "../lib/menu";
+
 const prisma = new PrismaClient();
 
 const DOMAIN = "demo.example.com";
@@ -375,9 +377,84 @@ async function main() {
   await prisma.payment.update({ where: { id: payment.id }, data: { status: "SUCCEEDED" } });
   const settled = await prisma.expenseShare.findUnique({ where: { id: tanvirShare.id } });
   const trail = await prisma.expenseShareEvent.count({ where: { shareId: tanvirShare.id } });
-  console.log(
-    `  2 expenses, 4 shares, 1 bKash payment — ledger row is now ${settled?.status}, ${trail} audit event(s)`
-  );
+  console.log("  2 expenses, 4 shares, 1 bKash payment — ledger row is now " + settled?.status + ", " + trail + " audit event(s)");
+
+  console.log("Creating a week of daily meal-vote demo data (M2.2)…");
+  await prisma.user.update({ where: { id: ids.nusrat }, data: { dietaryRestrictions: ["VEGETARIAN"] } });
+  await prisma.house.update({
+    where: { id: houseIds.bashundhara },
+    data: { defaultSafeMeal: "Plain rice, dal, and a boiled egg" },
+  });
+
+  const thisMonday = mondayOf(new Date());
+
+  // Monday (day 0): already decided — nusrat's candidate won.
+  const mondayWinner = await prisma.dayProposal.create({
+    data: {
+      houseId: houseIds.bashundhara, proposedById: ids.nusrat,
+      weekStartDate: thisMonday, dayOfWeek: 0,
+      breakfast: "Porota and dim bhaji", lunch: "Bhat, dal, aloo bhorta, mixed vegetable",
+      dinner: "Vegetable khichuri", estimatedCostPerHead: 110, nutritionProfile: "BALANCED",
+      dietaryTags: ["VEGETARIAN"],
+    },
+  });
+  await prisma.dayProposal.create({
+    data: {
+      houseId: houseIds.bashundhara, proposedById: ids.tanvir,
+      weekStartDate: thisMonday, dayOfWeek: 0,
+      lunch: "Bhat, murgi curry", dinner: "Bhuna khichuri with egg",
+      estimatedCostPerHead: 140, nutritionProfile: "PROTEIN_HEAVY",
+    },
+  });
+  await prisma.dailyMealResult.create({
+    data: {
+      houseId: houseIds.bashundhara, weekStartDate: thisMonday, dayOfWeek: 0,
+      status: "DECIDED", winningProposalId: mondayWinner.id, decidedAt: new Date(),
+    },
+  });
+
+  // Tuesday (day 1): voting still in progress — two candidates, one ballot
+  // cast so far. Tanvir's candidate has no VEGETARIAN tag, so it'll show as
+  // hidden on nusrat's own ballot (dietary filter enhancement).
+  const tueA = await prisma.dayProposal.create({
+    data: {
+      houseId: houseIds.bashundhara, proposedById: ids.nusrat,
+      weekStartDate: thisMonday, dayOfWeek: 1,
+      breakfast: "Ruti and vegetable curry", lunch: "Bhat, dal, fish curry",
+      estimatedCostPerHead: 130, nutritionProfile: "BALANCED", dietaryTags: ["VEGETARIAN"],
+    },
+  });
+  const tueB = await prisma.dayProposal.create({
+    data: {
+      houseId: houseIds.bashundhara, proposedById: ids.tanvir,
+      weekStartDate: thisMonday, dayOfWeek: 1,
+      lunch: "Bhat, beef bhuna", dinner: "Paratha and chicken curry",
+      estimatedCostPerHead: 160, nutritionProfile: "PROTEIN_HEAVY", dietaryTags: ["NO_PORK"],
+    },
+  });
+  const tueResult = await prisma.dailyMealResult.create({
+    data: { houseId: houseIds.bashundhara, weekStartDate: thisMonday, dayOfWeek: 1, status: "OPEN" },
+  });
+  const tanvirBallot = await prisma.dailyBallot.create({
+    data: { resultId: tueResult.id, voterId: ids.tanvir, round: "MAIN" },
+  });
+  await prisma.dailyBallotRanking.createMany({
+    data: [
+      { ballotId: tanvirBallot.id, proposalId: tueB.id, rank: 1 },
+      { ballotId: tanvirBallot.id, proposalId: tueA.id, rank: 2 },
+    ],
+  });
+
+  // Wednesday (day 2): nobody proposed anything — falls back to the house's
+  // default safe meal.
+  await prisma.dailyMealResult.create({
+    data: {
+      houseId: houseIds.bashundhara, weekStartDate: thisMonday, dayOfWeek: 2,
+      status: "FALLBACK", fallbackReason: "no_candidates", decidedAt: new Date(),
+    },
+  });
+
+  console.log("  1 decided day, 1 in-progress ranked ballot, 1 fallback-to-safe-meal day");
 
   console.log("Creating Mess Court disputes…");
   const mk = (raisedBy: string, against: string, title: string, description: string, category: string) =>
@@ -423,6 +500,7 @@ async function main() {
   console.log(`    arif@${DOMAIN}      resident — search, filter, shortlist, request to join, matches, verified badge`);
   console.log(`    farhana@${DOMAIN}   resident — mutual roommate match + messages with arif`);
   console.log(`    moinul@${DOMAIN}    resident — mismatched profile, MUST_HAVE budget dealbreaker, blocked by sadia`);
+  console.log(`    nusrat@${DOMAIN}    resident — /menu daily meal voting: Monday decided, Tuesday mid-vote, Wednesday fell back`);
   console.log(`    admin@${DOMAIN}     admin    — /admin, resolve the escalated dispute, /admin/profile-complaints`);
 }
 

@@ -1,10 +1,15 @@
-import { FeatureStub } from "@/components/FeatureStub";
+import Link from "next/link";
+
+import { ListingsMapView } from "./ListingsMapView";
+import { PageHeader, secondaryButtonClass } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
+import { mapStyleUrl } from "@/lib/mapProviders";
 
 export const metadata = { title: "Listings map — Smart Mess" };
+export const dynamic = "force-dynamic";
 
 /**
- * M3.3 Listings Map & Commute Evaluation — another area's feature.
+ * M3.3 Listings Map & Commute Evaluation — Mahia Tanzin.
  *
  * ── SCOPE BOUNDARY ──────────────────────────────────────────────────────────
  * This map is for PROSPECTIVE tenants: where are the rooms for rent, and how
@@ -23,17 +28,18 @@ export default async function MapPage() {
   await requireUser();
 
   return (
-    <FeatureStub
-      featureId="M3.3"
-      checklist={[
-        "Scope: rental listings only. Places a household already uses belong to M2.4 at /neighborhood — do not add shops, bazars or services here.",
-        "Put your key in NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, then restrict it by HTTP referrer in the Google Cloud console — a NEXT_PUBLIC_ key is visible to anyone who opens devtools. (M2.4 avoids this problem entirely by proxying its provider server-side; worth copying if you'd rather not ship a key at all.)",
-        "Read listings (with latitude/longitude) from GET /api/listings and drop a marker per listing.",
-        "Click a marker -> info window with title, rent and a link to the listing detail page.",
-        "Add the commute helper: Distance Matrix API from a typed destination (e.g. BRAC University) to each listing.",
-        "Handle listings with null coordinates — several will have them until the matching create form starts geocoding addresses.",
-        "This page has no API route or tables of its own; it reads the matching listings. Coordinate with Miftelul if you need extra columns.",
-      ]}
-    />
+    <div className="space-y-6">
+      <PageHeader
+        title="Listings map"
+        subtitle="Rental rooms plotted by location, with a commute helper from wherever you need to get to."
+        action={
+          <Link href="/map/saved-searches" className={secondaryButtonClass}>
+            Saved searches
+          </Link>
+        }
+      />
+
+      <ListingsMapView styleUrl={mapStyleUrl()} />
+    </div>
   );
 }

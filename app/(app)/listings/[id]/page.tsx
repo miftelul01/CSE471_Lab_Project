@@ -2,10 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ListingActions } from "./ListingActions";
+import { ListingLocationCard } from "./ListingLocationCard";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { listingVisibilityFilter } from "@/lib/authz";
+import { canSeeExactListingLocation, listingVisibilityFilter } from "@/lib/authz";
 import { ROOM_TYPE_LABELS } from "@/lib/listings";
+import { fuzzCoordinates } from "@/lib/mapListings";
+import { mapStyleUrl } from "@/lib/mapProviders";
 import { prisma } from "@/lib/prisma";
 
 export async function generateMetadata({ params }: { params: { id: string } }) {
@@ -48,6 +51,11 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
       select: { id: true, status: true },
     }),
   ]);
+
+  const locationUnlocked =
+    listing.latitude !== null && listing.longitude !== null
+      ? await canSeeExactListingLocation(user, listing.id)
+      : false;
 
   const hasLifestyle =
     listing.sleepSchedule !== null ||
@@ -182,19 +190,15 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           </Card>
 
           {listing.latitude !== null && listing.longitude !== null ? (
-            <Card>
-              <h2 className="mb-1 text-sm font-semibold text-slate-900">Location</h2>
-              <p className="font-mono text-xs text-slate-600">
-                {listing.latitude}, {listing.longitude}
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                The embedded map is part of another area — see{" "}
-                <Link href="/map" className="underline">
-                  the map view
-                </Link>
-                .
-              </p>
-            </Card>
+            <ListingLocationCard
+              styleUrl={mapStyleUrl()}
+              locationUnlocked={locationUnlocked}
+              coords={
+                locationUnlocked
+                  ? { lat: listing.latitude, lng: listing.longitude }
+                  : fuzzCoordinates(listing.latitude, listing.longitude, listing.id)
+              }
+            />
           ) : null}
         </div>
       </div>

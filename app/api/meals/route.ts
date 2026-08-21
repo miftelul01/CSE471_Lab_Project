@@ -27,7 +27,7 @@ type MealSlotBody = {
   mealType: MealType;
   costPerHead?: number | string | null;
   locksAt?: string | null;
-  menuProposalId?: string | null;
+  dayProposalId?: string | null;
 };
 
 export const POST = withUser(async (user, req: Request) => {

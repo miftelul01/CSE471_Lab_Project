@@ -4,9 +4,9 @@ import { ProposeMenuForm } from "./ProposeMenuForm";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { getActiveHouseId, requireUser } from "@/lib/auth";
 
-export const metadata = { title: "Propose a menu — Smart Mess" };
+export const metadata = { title: "Propose a meal — Smart Mess" };
 
-/** M2.2 Weekly Menu Proposal & Voting System — Mahia Tanzin. */
+/** M2.2 Daily Meal Proposal & Ranked-Choice Voting — Mahia Tanzin. */
 export default async function ProposeMenuPage() {
   const user = await requireUser();
   const houseId = await getActiveHouseId(user.id);
@@ -14,9 +14,9 @@ export default async function ProposeMenuPage() {
   if (!houseId) {
     return (
       <div>
-        <PageHeader title="Propose a menu" />
+        <PageHeader title="Propose a meal" />
         <EmptyState
-          title="Join a house to propose a menu"
+          title="Join a house to propose a meal"
           hint="Go to the Houses page to create or join a house first."
         />
       </div>
@@ -26,13 +26,13 @@ export default async function ProposeMenuPage() {
   return (
     <div className="max-w-3xl">
       <PageHeader
-        title="Propose a menu"
-        subtitle="Fill in as many meals as you like — an empty cell is simply left off the plan. Your housemates vote once you submit."
+        title="Propose a meal"
+        subtitle="Pick a day and fill in as many meals as you like — your candidate competes in that day's own ranked-choice vote, independent of every other day."
       />
       <ProposeMenuForm />
       <p className="mt-4 text-sm text-slate-500">
         <Link href="/menu" className="underline">
-          Back to weekly menu
+          Back to the menu board
         </Link>
       </p>
     </div>

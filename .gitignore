@@ -21,6 +21,7 @@ node_modules/
 # AI tools / editor config
 .claude/
 .gemini/
+.devlog.txt
 .agents/
 AGENTS.md
 .copilot/
@@ -47,5 +48,5 @@ next-env.d.ts
 # vercel
 .vercel
 
-.vercel
-.env*
+# project requirements
+Smart_Mess_Project_Requirements.pdf

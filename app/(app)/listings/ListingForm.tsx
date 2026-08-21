@@ -55,6 +55,44 @@ export function ListingForm({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [geocoding, setGeocoding] = useState(false);
+  const [geocodeError, setGeocodeError] = useState<string | null>(null);
+  const [geocodeMatches, setGeocodeMatches] = useState<
+    { name: string; address: string | null; lat: number | null; lng: number | null }[]
+  >([]);
+
+  async function findOnMap() {
+    const query = [form.address, form.area].filter(Boolean).join(", ");
+    if (!query.trim()) {
+      setGeocodeError("Fill in area or address first.");
+      return;
+    }
+    setGeocoding(true);
+    setGeocodeError(null);
+    setGeocodeMatches([]);
+
+    const response = await fetch(`/api/map/geocode?q=${encodeURIComponent(query)}`);
+    const body = await response.json();
+    setGeocoding(false);
+
+    if (!response.ok) {
+      setGeocodeError(body.error ?? "Could not look that address up.");
+      return;
+    }
+    const matches = (body.suggestions ?? []).filter(
+      (s: { lat: number | null; lng: number | null }) => s.lat != null && s.lng != null
+    );
+    if (matches.length === 0) {
+      setGeocodeError("No matches found — enter coordinates manually.");
+      return;
+    }
+    if (matches.length === 1) {
+      setForm((f) => ({ ...f, latitude: String(matches[0].lat), longitude: String(matches[0].lng) }));
+      return;
+    }
+    setGeocodeMatches(matches);
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -235,6 +273,32 @@ export function ListingForm({
           <p className="text-xs text-slate-500 sm:col-span-2">
             Filling these in puts the property on the map view.
           </p>
+
+          <div className="sm:col-span-2">
+            <button type="button" className={secondaryButtonClass} onClick={findOnMap} disabled={geocoding}>
+              {geocoding ? "Looking up…" : "Find on map"}
+            </button>
+            {geocodeError ? <p className="mt-1 text-xs text-rose-700">{geocodeError}</p> : null}
+            {geocodeMatches.length > 0 ? (
+              <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-white p-2">
+                {geocodeMatches.map((m, i) => (
+                  <li key={i}>
+                    <button
+                      type="button"
+                      className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-slate-50"
+                      onClick={() => {
+                        setForm((f) => ({ ...f, latitude: String(m.lat), longitude: String(m.lng) }));
+                        setGeocodeMatches([]);
+                      }}
+                    >
+                      <span className="font-medium">{m.name}</span>
+                      {m.address ? <span className="block text-slate-500">{m.address}</span> : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         </fieldset>
 
         <fieldset className="grid gap-4 rounded-md border border-slate-200 p-4 sm:grid-cols-2">
