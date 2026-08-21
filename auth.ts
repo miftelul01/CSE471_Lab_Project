@@ -28,6 +28,26 @@ declare module "next-auth" {
   }
 }
 
+/**
+ * Stops a development AUTH_URL from breaking the deployed site.
+ *
+ * `.env` carries AUTH_URL=http://localhost:3000 for local work. If that value
+ * is ever copied into Vercel's environment variables — which is the obvious
+ * thing to do when setting a project up, and what `vercel env pull` round-trips
+ * — NextAuth builds every OAuth callback against localhost. Sign-in then sends
+ * the user's browser to their own machine and the whole flow dies with no
+ * server-side error to find.
+ *
+ * `trustHost: true` below means NextAuth derives the origin from the incoming
+ * request when AUTH_URL is absent, which is always correct on Vercel. So on a
+ * Vercel host we drop a localhost AUTH_URL rather than honour it.
+ */
+if (process.env.VERCEL && /localhost|127\.0\.0\.1/.test(process.env.AUTH_URL ?? "")) {
+  console.warn("[auth] Ignoring localhost AUTH_URL in a Vercel deployment; using the request host.");
+  delete process.env.AUTH_URL;
+  delete process.env.NEXTAUTH_URL;
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   // The cast is a type-level formality: our client is configured to omit
   // `user.passwordHash` globally (see lib/prisma.ts), which narrows its type
@@ -86,6 +106,62 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
 
   callbacks: {
+    /**
+     * Closes the account pre-hijacking hole that `allowDangerousEmailAccountLinking`
+     * opens above.
+     *
+     * ── THE ATTACK ──────────────────────────────────────────────────────────
+     * /api/auth/register does not prove the registrant owns the address — no
+     * confirmation email is sent anywhere in this project, and `emailVerified`
+     * is never written. So an attacker can register victim@gmail.com with a
+     * password of their choosing. When the real owner later clicks "Continue
+     * with Google", automatic linking would attach their Google identity to the
+     * attacker's existing row, and the attacker's password would still open it.
+     * The victim never sees anything wrong.
+     * ────────────────────────────────────────────────────────────────────────
+     *
+     * The rule: Google may link into an existing account only when that account
+     * cannot have been planted. An account with no password (created by Google
+     * in the first place) is safe, and so is one whose address has actually
+     * been verified. A password account with an unverified address is not, so
+     * that one link is refused and the person is asked to sign in with the
+     * password they already have.
+     *
+     * Linking is still automatic in every safe case, which is the whole point
+     * of SSO — this only blocks the shape the attack needs.
+     */
+    async signIn({ user, account }) {
+      if (account?.provider !== "google") return true;
+
+      const email = user.email?.toLowerCase().trim();
+      if (!email) return "/login?error=NoEmailFromGoogle";
+
+      const existing = await prisma.user.findUnique({
+        where: { email },
+        omit: { passwordHash: false },
+      });
+
+      // No account yet: the adapter is about to create one. Nothing to hijack.
+      if (!existing) return true;
+
+      // Suspension has to bite on the SSO path too, or an admin's suspension is
+      // one button click away from being bypassed.
+      if (existing.status === "SUSPENDED") return "/login?error=AccountSuspended";
+
+      // Already linked — this is simply a returning Google user.
+      const linked = await prisma.account.findFirst({
+        where: { userId: existing.id, provider: "google" },
+        select: { id: true },
+      });
+      if (linked) return true;
+
+      if (existing.passwordHash && !existing.emailVerified) {
+        return "/login?error=PasswordAccountExists";
+      }
+
+      return true;
+    },
+
     async jwt({ token, user, trigger }) {
       // On sign-in, stamp the id onto the token.
       if (user) token.id = user.id;
@@ -129,6 +205,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           data: { name: user.email.split("@")[0] },
         });
       }
+    },
+
+    /**
+     * Google only releases an address it has verified, so a successful link is
+     * proof of ownership. Recording it matters beyond bookkeeping: the signIn
+     * callback treats `emailVerified` as the signal that an account is safe to
+     * link into, so without this a user who links Google would be re-challenged
+     * on every subsequent sign-in.
+     */
+    async linkAccount({ user, account }) {
+      if (account.provider !== "google") return;
+      await prisma.user.update({
+        where: { id: user.id! },
+        data: { emailVerified: new Date() },
+      });
     },
   },
 });
