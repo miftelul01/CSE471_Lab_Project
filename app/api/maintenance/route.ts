@@ -1,12 +1,17 @@
 import { badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
 import { getActiveHouseId } from "@/lib/auth";
-import { assertCanSetTicketStatus, assertHouseMember } from "@/lib/authz";
+import {
+  assertCanEditTicketDetails,
+  assertCanSetTicketStatus,
+  assertHouseMember,
+} from "@/lib/authz";
 import {
   MAX_TICKET_NOTE,
   TICKET_INCLUDE,
   TICKET_STATUSES,
   TICKET_STATUS_LABELS,
   canTransition,
+  isTicketEditable,
   toTicketView,
   validateTicketInput,
 } from "@/lib/maintenance";
@@ -109,6 +114,64 @@ export const POST = withUser(async (user, req: Request) => {
   });
 
   return ok({ ticket: toTicketView(ticket) }, 201);
+});
+
+type EditBody = {
+  ticketId?: string;
+  title?: string;
+  description?: string;
+  category?: string | null;
+  priority?: string;
+  photoUrl?: string | null;
+};
+
+/**
+ * Correct the ticket's own text — the reporter's half of the split the brief
+ * describes, where the resident owns the description and the landlord owns the
+ * status.
+ *
+ * Separate verb from PATCH on purpose: PATCH moves the state machine and is
+ * restricted to the house admin, while this is the reporter fixing "leaking
+ * tap" to "leaking tap, now flooding". Folding both into one handler would mean
+ * one permission check guarding two very different powers.
+ *
+ * Only while the ticket is still OPEN. Once the house has acted, rewriting the
+ * report would leave the timeline showing a landlord responding to words that
+ * are no longer there.
+ */
+export const PUT = withUser(async (user, req: Request) => {
+  const body = await readJson<EditBody>(req);
+  if (!body) return badRequest("Invalid JSON body");
+
+  const missing = missingFields(body, ["ticketId"]);
+  if (missing.length > 0) return badRequest(`Missing required fields: ${missing.join(", ")}`);
+
+  const ticketId = String(body.ticketId);
+  const existing = await assertCanEditTicketDetails(user, ticketId);
+
+  if (!isTicketEditable(existing.status)) {
+    return badRequest(
+      `This ticket is already ${TICKET_STATUS_LABELS[existing.status].toLowerCase()}, so its ` +
+        `description can no longer be changed.`
+    );
+  }
+
+  const valid = validateTicketInput(body);
+  if ("error" in valid) return badRequest(valid.error);
+
+  const ticket = await prisma.maintenanceTicket.update({
+    where: { id: ticketId },
+    data: {
+      title: valid.title,
+      description: valid.description,
+      category: valid.category,
+      priority: valid.priority,
+      photoUrl: valid.photoUrl,
+    },
+    include: TICKET_INCLUDE,
+  });
+
+  return ok({ ticket: toTicketView(ticket) });
 });
 
 type UpdateBody = {

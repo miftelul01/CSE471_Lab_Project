@@ -92,6 +92,17 @@ export const PAYMENT_STATUS_TONES: Record<PaymentStatus, "slate" | "amber" | "gr
 /** Statuses that mean "this share already has money moving against it". */
 export const LIVE_PAYMENT_STATUSES: PaymentStatus[] = ["INITIATED", "PENDING", "SUCCEEDED"];
 
+/**
+ * How long an unfinished checkout blocks a fresh attempt on the same share.
+ *
+ * Needed because a resident who opens a checkout and closes the tab leaves an
+ * INITIATED row behind. Without an expiry that row would bar them from ever
+ * paying that bill again; with one that is too long, they are stuck staring at
+ * a Pay button that refuses. Thirty minutes is comfortably longer than a real
+ * checkout takes and comfortably shorter than someone's patience.
+ */
+export const STALE_CHECKOUT_MS = 30 * 60 * 1000;
+
 /* ── Sandbox signing ────────────────────────────────────────────────────── */
 
 /**
