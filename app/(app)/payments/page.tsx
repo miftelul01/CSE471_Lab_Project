@@ -1,12 +1,15 @@
+import { CashClaims } from "./CashClaims";
 import { PayableShares } from "./PayableShares";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import {
   PAYMENT_STATUS_LABELS,
   PAYMENT_STATUS_TONES,
+  availableMethods,
   hasRealGateway,
   providerLabel,
 } from "@/lib/payments";
+import { cashClaimsFor } from "@/lib/payments.server";
 import { prisma } from "@/lib/prisma";
 import { asTaka, formatTaka } from "@/lib/wallet";
 
@@ -21,10 +24,14 @@ export const dynamic = "force-dynamic";
  * here — a payment reaching SUCCEEDED flips the share via the
  * payments_apply_to_ledger trigger, so this page only ever reads.
  */
-export default async function PaymentsPage() {
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  searchParams: { paid?: string; cancelled?: string; failed?: string; error?: string };
+}) {
   const user = await requireUser();
 
-  const [shares, payments] = await Promise.all([
+  const [shares, payments, cashClaims] = await Promise.all([
     prisma.expenseShare.findMany({
       where: { userId: user.id, status: "PENDING" },
       include: {
@@ -42,7 +49,10 @@ export default async function PaymentsPage() {
       orderBy: { createdAt: "desc" },
       take: 20,
     }),
+    cashClaimsFor(user.id),
   ]);
+
+  const methods = availableMethods();
 
   const outstanding = shares.reduce((sum, share) => sum + asTaka(share.amount), 0);
 
@@ -53,14 +63,35 @@ export default async function PaymentsPage() {
         subtitle="Settle your share of the house bills. Paying here updates the wallet ledger automatically."
       />
 
+      {searchParams.paid ? (
+        <p className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Payment received. The bill below has been marked paid in the wallet ledger.
+        </p>
+      ) : null}
+      {searchParams.cancelled ? (
+        <p className="rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-700">
+          That payment was cancelled. Nothing was charged, and the bill is still open.
+        </p>
+      ) : null}
+      {searchParams.failed || searchParams.error ? (
+        <p className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          That payment didn&apos;t go through, so the bill is still open. Nothing was charged —
+          you can try again, or pick a different method.
+        </p>
+      ) : null}
+
+      <CashClaims claims={cashClaims} />
+
       {!hasRealGateway() ? (
         <Card>
           <p className="text-sm text-slate-700">
             <span className="font-medium">Sandbox mode.</span> No payment gateway is configured, so
             checkout runs against a built-in simulator. The full flow is real — a signed callback,
-            a verified webhook and the ledger trigger — only the bank is simulated. Add{" "}
-            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">STRIPE_SECRET_KEY</code> to
-            switch to live Stripe Checkout.
+            a verified webhook and the ledger trigger — only the bank is simulated. Add the{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">BKASH_*</code> credentials
+            for bKash, or{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">STRIPE_SECRET_KEY</code> for
+            card payments. Cash works either way.
           </p>
         </Card>
       ) : null}
@@ -76,9 +107,9 @@ export default async function PaymentsPage() {
           </p>
         </Card>
         <Card>
-          <p className="text-sm text-slate-600">Payment method</p>
+          <p className="text-sm text-slate-600">Ways to pay</p>
           <p className="mt-2 text-lg font-medium text-slate-900">
-            {providerLabel(hasRealGateway() ? "STRIPE" : "MANUAL")}
+            {methods.map((option) => option.label).join(" · ")}
           </p>
           <p className="mt-1 text-xs text-slate-500">
             Your share amount is always read from the ledger, never from the browser.
@@ -93,6 +124,7 @@ export default async function PaymentsPage() {
         />
       ) : (
         <PayableShares
+          methods={methods}
           shares={shares.map((share) => ({
             id: share.id,
             title: share.expense.title,

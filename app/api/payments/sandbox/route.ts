@@ -1,5 +1,5 @@
 import { badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
-import { hasRealGateway, signSandboxPayload } from "@/lib/payments";
+import { hasRealGateway, signInternalEvent } from "@/lib/payments";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -54,7 +54,7 @@ export const POST = withUser(async (user, req: Request) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-sandbox-signature": signSandboxPayload(rawBody),
+      "x-internal-signature": signInternalEvent(rawBody),
     },
     body: rawBody,
   });

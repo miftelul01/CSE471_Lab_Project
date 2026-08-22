@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { hasRealGateway, verifySandboxSignature, verifyStripeSignature } from "@/lib/payments";
+import { verifyInternalSignature, verifyStripeSignature } from "@/lib/payments";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -28,7 +28,19 @@ type StripeEvent = {
   data?: { object?: { id?: string; metadata?: { payment_id?: string } } };
 };
 
-type SandboxEvent = { paymentId?: string; outcome?: "SUCCEEDED" | "FAILED" };
+/**
+ * An event this server raised about itself: the sandbox's confirm button, the
+ * bKash callback once execute came back Completed, or a confirmed cash
+ * handover. All three are signed with the app's own secret, which is why they
+ * come through the same door as Stripe rather than each writing SUCCEEDED
+ * somewhere of its own.
+ */
+type InternalEvent = {
+  paymentId?: string;
+  outcome?: "SUCCEEDED" | "FAILED";
+  /** The gateway's own reference, when there was a gateway. */
+  providerPaymentId?: string;
+};
 
 const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
 
@@ -38,14 +50,19 @@ export async function POST(req: Request) {
   const rawBody = await req.text();
 
   const stripeSignature = req.headers.get("stripe-signature");
-  const sandboxSignature = req.headers.get("x-sandbox-signature");
+  const internalSignature = req.headers.get("x-internal-signature");
 
   let paymentId: string | null = null;
   let providerPaymentId: string | null = null;
   let outcome: "SUCCEEDED" | "FAILED" = "SUCCEEDED";
 
-  if (hasRealGateway() || stripeSignature) {
-    if (!stripeSignature || !verifyStripeSignature(rawBody, stripeSignature)) {
+  // Dispatch on which signature ARRIVED, not on which gateway is configured.
+  // Keying this off hasRealGateway() meant that the moment a Stripe key
+  // existed, every internally-signed event — bKash settling, cash being
+  // confirmed — was rejected for want of a stripe-signature it was never going
+  // to have. Both kinds are verified; neither is trusted for being first.
+  if (stripeSignature) {
+    if (!verifyStripeSignature(rawBody, stripeSignature)) {
       return bad("Invalid signature.");
     }
 
@@ -65,18 +82,19 @@ export async function POST(req: Request) {
     paymentId = event.data?.object?.metadata?.payment_id ?? null;
     providerPaymentId = event.data?.object?.id ?? null;
   } else {
-    if (!sandboxSignature || !verifySandboxSignature(rawBody, sandboxSignature)) {
+    if (!internalSignature || !verifyInternalSignature(rawBody, internalSignature)) {
       return bad("Invalid signature.");
     }
 
-    let event: SandboxEvent;
+    let event: InternalEvent;
     try {
-      event = JSON.parse(rawBody) as SandboxEvent;
+      event = JSON.parse(rawBody) as InternalEvent;
     } catch {
       return bad("Malformed event body.");
     }
 
     paymentId = event.paymentId ?? null;
+    providerPaymentId = event.providerPaymentId ?? null;
     outcome = event.outcome === "FAILED" ? "FAILED" : "SUCCEEDED";
   }
 

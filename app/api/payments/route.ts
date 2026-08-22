@@ -1,6 +1,17 @@
 import { HttpError, badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
 import { loadPayableShare } from "@/lib/authz";
-import { LIVE_PAYMENT_STATUSES, STALE_CHECKOUT_MS, createCheckout } from "@/lib/payments";
+import {
+  LIVE_PAYMENT_STATUSES,
+  STALE_CHECKOUT_MS,
+  type PaymentMethod,
+  availableMethods,
+  bkashSucceeded,
+  createCheckout,
+  isMethodAvailable,
+  providerForMethod,
+  providerLabel,
+  queryBkashPayment,
+} from "@/lib/payments";
 import { prisma } from "@/lib/prisma";
 import { asTaka, takaToPaisa } from "@/lib/wallet";
 
@@ -43,21 +54,33 @@ export const GET = withUser(async (user) => {
   });
 });
 
-type StartBody = { expenseShareId?: string };
+type StartBody = { expenseShareId?: string; method?: string };
 
 /**
  * Start a payment for one of the caller's own pending shares.
  *
- * The body carries a share id and nothing else — no amount, no user id. Both
- * are read from the row (see loadPayableShare), because a client-supplied
- * amount means anyone can settle a 20,000 BDT bill by posting {"amount": 1}.
+ * The body carries a share id and a method, and nothing else — no amount, no
+ * user id. Both are read from the row (see loadPayableShare), because a
+ * client-supplied amount means anyone can settle a 20,000 BDT bill by posting
+ * {"amount": 1}.
+ *
+ * The method is checked against what is actually configured rather than merely
+ * being a known enum value. Otherwise a request naming BKASH on a deployment
+ * with no bKash credentials gets an exception from deep inside the client
+ * instead of an answer it can act on.
  */
 export const POST = withUser(async (user, req: Request) => {
   const body = await readJson<StartBody>(req);
   if (!body) return badRequest("Invalid JSON body");
 
-  const missing = missingFields(body, ["expenseShareId"]);
+  const missing = missingFields(body, ["expenseShareId", "method"]);
   if (missing.length > 0) return badRequest(`Missing required fields: ${missing.join(", ")}`);
+
+  const method = String(body.method);
+  if (!isMethodAvailable(method)) {
+    const offered = availableMethods().map((option) => option.method);
+    return badRequest(`That payment method isn't available. Choose one of: ${offered.join(", ")}.`);
+  }
 
   const share = await loadPayableShare(user, String(body.expenseShareId));
 
@@ -91,7 +114,14 @@ export const POST = withUser(async (user, req: Request) => {
     const live = await tx.payment.findMany({
       where: { expenseShareId: share.id, status: { in: LIVE_PAYMENT_STATUSES } },
       orderBy: { createdAt: "desc" },
-      select: { id: true, status: true, createdAt: true, providerPayload: true },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        provider: true,
+        providerPaymentId: true,
+        providerPayload: true,
+      },
     });
 
     // The trigger has already flipped the share to PAID; a second charge would
@@ -99,6 +129,14 @@ export const POST = withUser(async (user, req: Request) => {
     if (live.some((payment) => payment.status === "SUCCEEDED")) {
       return { kind: "paid" as const };
     }
+
+    // A cash claim waits on a person, not a gateway. It must not be swept up
+    // by the staleness rule below — thirty minutes is a sensible life for an
+    // abandoned checkout tab and a nonsense one for "I handed Nusrat the money
+    // and she hasn't confirmed yet" — and it must not be resumed into a
+    // redirect either, because there is nowhere to redirect to.
+    const cash = live.find((payment) => payment.provider === "CASH");
+    if (cash) return { kind: "awaitingCash" as const, paymentId: cash.id };
 
     const cutoff = new Date(Date.now() - STALE_CHECKOUT_MS);
 
@@ -115,19 +153,27 @@ export const POST = withUser(async (user, req: Request) => {
     const resumable = live.find((payment) => payment.createdAt >= cutoff);
     if (resumable) {
       const stored = (resumable.providerPayload as { redirectUrl?: string } | null)?.redirectUrl;
-      return { kind: "resume" as const, paymentId: resumable.id, redirectUrl: stored ?? null };
+      return {
+        kind: "resume" as const,
+        paymentId: resumable.id,
+        provider: resumable.provider,
+        providerPaymentId: resumable.providerPaymentId,
+        redirectUrl: stored ?? null,
+      };
     }
 
-    // Always INITIATED, never SUCCEEDED: payments_apply_to_ledger fires on
-    // UPDATE, so a row inserted in its final state would never settle the
-    // share. Created before the gateway call so a failure still leaves a trace.
+    // Created before the gateway call, so a failure still leaves a trace.
     const created = await tx.payment.create({
       data: {
         userId: user.id,
         houseId: share.expense.houseId,
         expenseShareId: share.id,
-        provider: "MANUAL",
-        status: "INITIATED",
+        provider: providerForMethod(method),
+        // PENDING for cash, which is a claim awaiting a human; INITIATED for a
+        // gateway, which is a checkout awaiting a resident. Never SUCCEEDED:
+        // payments_apply_to_ledger fires on UPDATE, so a row inserted in its
+        // final state would never settle the share.
+        status: method === "CASH" ? "PENDING" : "INITIATED",
         amount: share.amount,
         currency: "BDT",
       },
@@ -140,16 +186,77 @@ export const POST = withUser(async (user, req: Request) => {
     return badRequest("A payment for that share has already gone through.");
   }
 
+  if (decision.kind === "awaitingCash") {
+    return badRequest(
+      "A cash payment for this share is already waiting to be confirmed by whoever paid the bill."
+    );
+  }
+
   if (decision.kind === "resume") {
     // Only reachable if a concurrent request created the row microseconds ago
     // and has not yet stored its gateway URL.
     if (!decision.redirectUrl) {
       return badRequest("A payment for this share is already starting. Try again in a moment.");
     }
+
+    /**
+     * An attempt already running under a DIFFERENT method is not resumable.
+     *
+     * Handing back a bKash URL to someone who just picked Cash is nonsense,
+     * and quietly failing the old attempt so the new one can start is worse:
+     * the first checkout may still be open in another tab, and completing both
+     * is a real double payment. Saying so is the only honest answer.
+     */
+    if (decision.provider !== providerForMethod(method)) {
+      return badRequest(
+        `You already have a ${providerLabel(decision.provider)} payment in progress for this bill. ` +
+          `Finish or cancel it before paying another way.`
+      );
+    }
+
+    /**
+     * A bKash checkout URL is single-use, which Stripe's is not.
+     *
+     * Resuming exists so that two taps on Pay cannot open two checkouts
+     * against one bill — that part is right and stays. But handing a resident
+     * back a bKash URL they have already opened gives them "Invalid page
+     * access request" and no way forward, so before resuming we ask bKash
+     * whether that session is still live.
+     *
+     * Asking is also the only safe way to retire it. Simply failing the old
+     * row and opening a new one would let someone with the first checkout
+     * still open in another tab complete both and pay twice.
+     */
+    if (decision.provider === "BKASH" && decision.providerPaymentId) {
+      const state = await queryBkashPayment(decision.providerPaymentId).catch(() => null);
+
+      if (state && bkashSucceeded(state)) {
+        return badRequest("That payment already went through. Refresh to see it settled.");
+      }
+
+      if (!state || state.transactionStatus !== "Initiated") {
+        await prisma.payment.update({
+          where: { id: decision.paymentId },
+          data: {
+            status: "FAILED",
+            providerPayload: { reason: "bkash-session-expired" },
+          },
+        });
+        return badRequest("That bKash session expired. Tap Pay again to start a fresh one.");
+      }
+    }
+
     return ok({ paymentId: decision.paymentId, redirectUrl: decision.redirectUrl, resumed: true });
   }
 
   const paymentId = decision.paymentId;
+
+  // Cash stops here. There is no gateway to call and nothing to redirect to —
+  // the row sits PENDING until the person who actually paid the bill confirms
+  // it, which is the only thing that can move it to SUCCEEDED.
+  if (method === "CASH") {
+    return ok({ paymentId, awaitingConfirmation: true }, 201);
+  }
 
   let session;
   try {
@@ -159,6 +266,11 @@ export const POST = withUser(async (user, req: Request) => {
       currency: "BDT",
       description: `${share.expense.title} — your share`,
       origin,
+      method: method as PaymentMethod,
+      // bKash wants something identifying the payer. Their own number is the
+      // useful answer when we have it; the user id is a stable stand-in when
+      // we do not, and neither is trusted for anything.
+      payerReference: user.profile.phone ?? user.id,
     });
   } catch (error) {
     // Marked FAILED rather than deleted, so a resident who says "I tried to pay
