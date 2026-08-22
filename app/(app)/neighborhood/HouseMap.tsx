@@ -41,6 +41,7 @@ export function HouseMap({
   markers,
   styleUrl,
   onLongPress,
+  livePin,
   draftPin,
   routeGeometry,
   className = "h-[28rem]",
@@ -51,6 +52,8 @@ export function HouseMap({
   styleUrl: string;
   /** Enables drop-a-pin, used by house setup and by adding a place by hand. */
   onLongPress?: (coords: Coords) => void;
+  /** Where the resident is right now, while a trip is being tracked. */
+  livePin?: (Coords & { accuracyM?: number | null }) | null;
   draftPin?: Coords | null;
   /** [lng, lat] pairs from a directions call. */
   routeGeometry?: [number, number][] | null;
@@ -240,7 +243,26 @@ export function HouseMap({
         new maplibregl.Marker({ element }).setLngLat([draftPin.lng, draftPin.lat]).addTo(instance)
       );
     }
-  }, [pin, markers, draftPin]);
+
+    // The resident's own position during a tracked trip. Deliberately a
+    // different shape and colour from every other pin: it is the only marker
+    // on this map that moves, and it must never be mistaken for a place.
+    if (livePin) {
+      const element = document.createElement("div");
+      element.className = "relative flex items-center justify-center";
+      element.title = "You are here";
+
+      const halo = document.createElement("span");
+      halo.className = "absolute h-6 w-6 animate-ping rounded-full bg-sky-500/40";
+      const dot = document.createElement("span");
+      dot.className = "h-3.5 w-3.5 rounded-full border-2 border-white bg-sky-600 shadow";
+      element.append(halo, dot);
+
+      drawn.current.push(
+        new maplibregl.Marker({ element }).setLngLat([livePin.lng, livePin.lat]).addTo(instance)
+      );
+    }
+  }, [pin, markers, draftPin, livePin]);
 
   /* ── Route line ───────────────────────────────────────────────────────── */
 

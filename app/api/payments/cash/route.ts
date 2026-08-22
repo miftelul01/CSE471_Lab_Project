@@ -67,7 +67,7 @@ export const POST = withUser(async (user, req: Request) => {
     return forbidden("Someone else has to confirm a cash payment — you can't confirm your own.");
   }
 
-  if (!(await canConfirm(user.id, expense.paidById, expense.houseId))) {
+  if (!(await canConfirm(payment.userId, user.id, expense.paidById, expense.houseId))) {
     return forbidden("Only whoever paid the bill, or the house admin, can confirm a cash payment.");
   }
 
@@ -96,12 +96,22 @@ export const POST = withUser(async (user, req: Request) => {
   return ok({ paymentId, outcome });
 });
 
-/** Whoever fronted the money, or — when nobody did — the house admin. */
+/**
+ * Whoever fronted the money, or the house admin when that cannot work.
+ *
+ * "Cannot work" is two cases, and the second is easy to miss: an expense with
+ * no payer at all, and an expense whose payer is the very person claiming to
+ * have paid cash. Someone who fronts a bill still owes their own share of it,
+ * so if that share is ever PENDING they would be the only person entitled to
+ * confirm their own handover — which the caller refuses, correctly, leaving
+ * the claim impossible to close by anybody. The admin is the way out of both.
+ */
 async function canConfirm(
-  userId: string,
+  claimantId: string,
+  confirmerId: string,
   paidById: string | null,
   houseId: string
 ): Promise<boolean> {
-  if (paidById) return paidById === userId;
-  return isHouseAdmin(userId, houseId);
+  if (paidById && paidById !== claimantId) return paidById === confirmerId;
+  return isHouseAdmin(confirmerId, houseId);
 }

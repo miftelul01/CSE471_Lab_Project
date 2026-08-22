@@ -77,11 +77,22 @@ export function PlaceSearchInput({
           `/api/neighborhood/places?q=${encodeURIComponent(query)}`,
           { signal: controller.signal }
         );
-        const body = await response.json();
+
+        // Read as text first. A platform error page is HTML, and letting
+        // response.json() reject on it sent every server-side failure down the
+        // "could not reach" path below — which reads as "your connection is
+        // broken" and told the resident to check the one thing that was fine.
+        const raw = await response.text();
+        let body: { error?: string; suggestions?: PlaceSuggestion[] } = {};
+        try {
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          body = {};
+        }
 
         if (!response.ok) {
           setStatus("error");
-          setMessage(body.error ?? "Could not search for places.");
+          setMessage(body.error ?? `Place search is unavailable right now (${response.status}).`);
           setSuggestions([]);
           return;
         }
@@ -95,7 +106,8 @@ export function PlaceSearchInput({
         // failure worth showing anybody.
         if ((error as Error).name === "AbortError") return;
         setStatus("error");
-        setMessage("Could not reach the place search.");
+        setMessage("Could not reach the place search — check your connection.");
+        setSuggestions([]);
       }
     }, DEBOUNCE_MS);
 

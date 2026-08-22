@@ -60,10 +60,41 @@ export async function GET(req: Request) {
   // to spend a bKash call finding that out.
   if (payment.status === "SUCCEEDED") return back(origin, { paid: "1" });
 
-  // The resident cancelled or bKash failed them. Nothing was captured, so
-  // record the attempt as failed and let them try again from the top.
+  /**
+   * The resident cancelled, or bKash failed them — reportedly.
+   *
+   * This used to take that at face value and mark the row FAILED, which is a
+   * double-charge vector rather than merely sloppy. `status` is a query
+   * parameter: anyone holding the paymentID can arrive here with
+   * `&status=cancel`. Failing the row frees the share, the resident (whose
+   * real bKash tab is still open and still completable) starts a second
+   * payment, and then completes both. Two transactions, one bill.
+   *
+   * So a claimed cancellation is verified like everything else. Only bKash
+   * saying the session is no longer live retires the row; while it still says
+   * "Initiated", the attempt stands and the resident is simply sent back.
+   */
   if (reported && reported !== "success") {
-    await settle(origin, payment.id, "FAILED", { reportedStatus: reported });
+    const state = await queryBkashPayment(paymentID).catch(() => null);
+
+    if (state && bkashSucceeded(state)) {
+      // Cancelled in the URL, completed in reality. Believe bKash.
+      await settle(origin, payment.id, "SUCCEEDED", {
+        trxID: state.trxID ?? null,
+        transactionStatus: state.transactionStatus ?? null,
+        note: "reported-cancel-but-completed",
+      });
+      return back(origin, { paid: "1" });
+    }
+
+    if (state?.transactionStatus === "Initiated") {
+      return back(origin, { cancelled: "1" });
+    }
+
+    await settle(origin, payment.id, "FAILED", {
+      reportedStatus: reported,
+      confirmedStatus: state?.transactionStatus ?? null,
+    });
     return back(origin, { cancelled: "1" });
   }
 

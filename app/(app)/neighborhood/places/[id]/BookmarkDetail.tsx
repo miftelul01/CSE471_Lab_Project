@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { HouseMap } from "../../HouseMap";
+import { type LiveFix, TripTracker } from "../../TripTracker";
 import {
   Badge,
   Card,
@@ -94,6 +95,7 @@ export function BookmarkDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [liveFix, setLiveFix] = useState<LiveFix | null>(null);
 
   const visibleNotes = expanded ? notes : notes.slice(0, NOTES_PREVIEW_COUNT);
 
@@ -499,7 +501,17 @@ export function BookmarkDetail({
                   lng: bookmark.lng,
                 },
               ]}
+              livePin={liveFix}
               className="h-64"
+            />
+          ) : null}
+
+          {!bookmark.isOnline && bookmark.lat !== null && bookmark.lng !== null ? (
+            <TripTracker
+              destination={{ lat: bookmark.lat, lng: bookmark.lng }}
+              destinationName={bookmark.name}
+              bookmarkId={bookmark.id}
+              onFix={setLiveFix}
             />
           ) : null}
 

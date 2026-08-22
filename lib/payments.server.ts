@@ -42,6 +42,7 @@ export async function cashClaimsFor(userId: string): Promise<CashClaimView[]> {
       id: true,
       amount: true,
       createdAt: true,
+      userId: true,
       user: { select: { name: true } },
       expenseShare: {
         select: { expense: { select: { title: true, houseId: true, paidById: true } } },
@@ -55,9 +56,14 @@ export async function cashClaimsFor(userId: string): Promise<CashClaimView[]> {
     const expense = payment.expenseShare?.expense;
     if (!expense) continue;
 
-    const allowed = expense.paidById
-      ? expense.paidById === userId
-      : await isHouseAdmin(userId, expense.houseId);
+    // Mirrors canConfirm() in app/api/payments/cash/route.ts, including the
+    // case where the bill's payer is the claimant themselves — they cannot
+    // confirm their own handover, so the admin has to be able to.
+    const claimantIsPayer = expense.paidById === payment.userId;
+    const allowed =
+      expense.paidById && !claimantIsPayer
+        ? expense.paidById === userId
+        : await isHouseAdmin(userId, expense.houseId);
     if (!allowed) continue;
 
     claims.push({

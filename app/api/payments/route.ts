@@ -140,7 +140,23 @@ export const POST = withUser(async (user, req: Request) => {
 
     const cutoff = new Date(Date.now() - STALE_CHECKOUT_MS);
 
-    const stale = live.filter((payment) => payment.createdAt < cutoff);
+    /**
+     * bKash attempts are never swept on age alone.
+     *
+     * The sweep exists for abandoned checkout tabs, and for Stripe that is
+     * safe: a stale session is dead and failing it costs nothing. A bKash
+     * session at minute 31 may still be sitting open and completable, and
+     * failing it frees the share for a second payment — so the resident
+     * finishes both and pays the bill twice.
+     *
+     * Since the only way to know is to ask, and this runs inside a row lock
+     * where a network call has no business, bKash rows stay resumable at any
+     * age and the resume path below asks bKash before doing anything. A truly
+     * expired one is retired there, one tap later, with an answer behind it.
+     */
+    const stale = live.filter(
+      (payment) => payment.createdAt < cutoff && payment.provider !== "BKASH"
+    );
     if (stale.length > 0) {
       await tx.payment.updateMany({
         where: { id: { in: stale.map((payment) => payment.id) } },
@@ -150,7 +166,9 @@ export const POST = withUser(async (user, req: Request) => {
 
     // A checkout still within the window is resumed rather than duplicated —
     // the resident gets back the same gateway session instead of a second one.
-    const resumable = live.find((payment) => payment.createdAt >= cutoff);
+    const resumable = live.find(
+      (payment) => payment.createdAt >= cutoff || payment.provider === "BKASH"
+    );
     if (resumable) {
       const stored = (resumable.providerPayload as { redirectUrl?: string } | null)?.redirectUrl;
       return {

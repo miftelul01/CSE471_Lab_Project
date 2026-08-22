@@ -71,62 +71,95 @@ export function AddBookmarkForm({
     setDuplicate(null);
   }
 
+  /**
+   * Saves the place.
+   *
+   * Everything after setBusy(true) is inside try/finally for one reason: this
+   * used to throw and leave the button reading "Saving…" for as long as the
+   * tab stayed open. `response.json()` is the culprit — a route that answers
+   * with anything other than JSON (a platform 500 or 504 page, which is what a
+   * cold database or a slow provider call produces) makes it reject, the
+   * exception escapes an async click handler where nothing is watching for it,
+   * and setBusy(false) is never reached. The resident sees a form that has
+   * apparently hung, with no error and nothing to retry.
+   *
+   * So: the body is parsed defensively, failure is reported in words, and busy
+   * is cleared in a finally that no path can skip.
+   */
   async function submit(confirmDuplicate: boolean) {
     setBusy(true);
     setError(null);
 
-    const response = await fetch("/api/neighborhood/bookmarks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name,
-        category: form.category,
-        visibility: form.visibility,
-        address: form.address || null,
-        note: form.note || null,
-        isOnline: form.isOnline,
-        onlineUrl: form.isOnline ? form.onlineUrl || null : null,
-        externalPlaceId: placeId,
-        lat: form.isOnline ? null : (effectiveCoords?.lat ?? null),
-        lng: form.isOnline ? null : (effectiveCoords?.lng ?? null),
-        confirmDuplicate,
-      }),
-    });
-    const body = await response.json();
-    setBusy(false);
+    try {
+      const response = await fetch("/api/neighborhood/bookmarks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name,
+          category: form.category,
+          visibility: form.visibility,
+          address: form.address || null,
+          note: form.note || null,
+          isOnline: form.isOnline,
+          onlineUrl: form.isOnline ? form.onlineUrl || null : null,
+          externalPlaceId: placeId,
+          lat: form.isOnline ? null : (effectiveCoords?.lat ?? null),
+          lng: form.isOnline ? null : (effectiveCoords?.lng ?? null),
+          confirmDuplicate,
+        }),
+      });
 
-    if (!response.ok) {
+      // Not response.json(): an error page is HTML, and parsing it throws over
+      // the top of the real problem, which is the status code.
+      const raw = await response.text();
+      let body: any = {};
+      try {
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        body = {};
+      }
+
+      if (!response.ok) {
       // The server distinguishes "this exact place is already pinned" (a hard
       // reject) from "something very close is already pinned" (a warning worth
       // overriding). Only the second offers a way through.
-      if (body.details?.kind === "nearby") {
-        setDuplicate({
-          id: body.details.duplicateOf,
-          name: body.details.duplicateName,
-          message: body.error,
-        });
+        if (body.details?.kind === "nearby") {
+          setDuplicate({
+            id: body.details.duplicateOf,
+            name: body.details.duplicateName,
+            message: body.error,
+          });
+          return;
+        }
+        setError(
+          body.error ??
+            `Could not save that place (server said ${response.status}). Nothing was lost — try again.`
+        );
         return;
       }
-      setError(body.error ?? "Could not save that place.");
-      return;
-    }
 
-    setForm({
-      name: "",
-      category: form.category,
-      visibility: "HOUSE",
-      address: "",
-      note: "",
-      isOnline: false,
-      onlineUrl: "",
-    });
-    setSearch("");
-    setPlaceId(null);
-    setCoords(null);
-    setDuplicate(null);
-    onDraftPinChange(null);
-    setOpen(false);
-    router.refresh();
+      setForm({
+        name: "",
+        category: form.category,
+        visibility: "HOUSE",
+        address: "",
+        note: "",
+        isOnline: false,
+        onlineUrl: "",
+      });
+      setSearch("");
+      setPlaceId(null);
+      setCoords(null);
+      setDuplicate(null);
+      onDraftPinChange(null);
+      setOpen(false);
+      router.refresh();
+    } catch {
+      // fetch itself rejected: offline, DNS, the request cut off mid-flight.
+      setError("Could not reach the server. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!open) {
