@@ -102,7 +102,7 @@ export async function POST(req: Request) {
 
   const payment = await prisma.payment.findFirst({
     where: paymentId ? { id: paymentId } : { providerPaymentId: providerPaymentId! },
-    select: { id: true, status: true },
+    select: { id: true, status: true, expenseShareId: true },
   });
 
   // A 200 for an unknown id on purpose: a gateway that keeps retrying because
@@ -114,6 +114,55 @@ export async function POST(req: Request) {
   // FROM 'SUCCEEDED', so this is the second of two locks, not the only one.
   if (payment.status === "SUCCEEDED") {
     return NextResponse.json({ received: true, alreadyApplied: true });
+  }
+
+  /**
+   * One bill, one successful payment — enforced here rather than trusted.
+   *
+   * The replay guard above only covers the SAME row arriving twice. This is
+   * the other shape: two DIFFERENT payment rows against one share, which is
+   * what every abandoned-and-retried checkout risks. The gateway session that
+   * was retired can still be sitting completable in a tab somewhere, and if
+   * its callback lands after the replacement has already settled, the resident
+   * has paid twice.
+   *
+   * The money moved, so the row is recorded SUCCEEDED — calling it FAILED
+   * would be a lie about a real transaction, and the trail is the only way
+   * anybody finds the overpayment later. What it must not do is pretend to be
+   * the payment that settled the bill: it is flagged, and the ledger trigger
+   * has already done its work from the first one.
+   */
+  if (outcome === "SUCCEEDED" && payment.expenseShareId) {
+    const alreadySettled = await prisma.payment.findFirst({
+      where: {
+        expenseShareId: payment.expenseShareId,
+        status: "SUCCEEDED",
+        id: { not: payment.id },
+      },
+      select: { id: true },
+    });
+
+    if (alreadySettled) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: "SUCCEEDED",
+          providerPayload: JSON.stringify({
+            duplicateOf: alreadySettled.id,
+            needsRefund: true,
+            event: rawBody.slice(0, 3000),
+          }),
+          ...(providerPaymentId ? { providerPaymentId } : {}),
+        },
+      });
+
+      console.error(
+        `[m3.2] duplicate settlement on share ${payment.expenseShareId}: ` +
+          `payment ${payment.id} landed after ${alreadySettled.id}. Refund required.`
+      );
+
+      return NextResponse.json({ received: true, duplicate: true, needsRefund: true });
+    }
   }
 
   await prisma.payment.update({

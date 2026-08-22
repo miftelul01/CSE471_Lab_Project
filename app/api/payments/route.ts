@@ -1,4 +1,7 @@
+import { Prisma } from "@prisma/client";
+
 import { HttpError, badRequest, missingFields, ok, readJson, withUser } from "@/lib/api";
+import type { SessionUser } from "@/lib/auth";
 import { loadPayableShare } from "@/lib/authz";
 import {
   LIVE_PAYMENT_STATUSES,
@@ -177,6 +180,8 @@ export const POST = withUser(async (user, req: Request) => {
         provider: resumable.provider,
         providerPaymentId: resumable.providerPaymentId,
         redirectUrl: stored ?? null,
+        handedOff:
+          (resumable.providerPayload as { handedOff?: boolean } | null)?.handedOff === true,
       };
     }
 
@@ -233,36 +238,63 @@ export const POST = withUser(async (user, req: Request) => {
     }
 
     /**
-     * A bKash checkout URL is single-use, which Stripe's is not.
+     * A bKash checkout URL is single-use, and bKash will not tell you so.
      *
-     * Resuming exists so that two taps on Pay cannot open two checkouts
-     * against one bill — that part is right and stays. But handing a resident
-     * back a bKash URL they have already opened gives them "Invalid page
-     * access request" and no way forward, so before resuming we ask bKash
-     * whether that session is still live.
+     * Its payment-status endpoint answers "Initiated" both for a session that
+     * was never opened and for one the resident opened and walked away from —
+     * but loading that URL a second time renders "Invalid page access
+     * request", a dead end with no way forward. Asking bKash therefore cannot
+     * distinguish the two cases, so the only reliable signal is our own: we
+     * know whether we have already sent a browser to it.
      *
-     * Asking is also the only safe way to retire it. Simply failing the old
-     * row and opening a new one would let someone with the first checkout
-     * still open in another tab complete both and pay twice.
+     * So a bKash URL is handed out exactly once. A second tap on Pay retires
+     * that attempt and opens a fresh checkout, which is what the resident is
+     * plainly asking for. The double-payment worry this used to guard against
+     * — the retired session still sitting completable in another tab — is
+     * handled where it belongs, in the webhook: a share that already has a
+     * successful payment cannot be settled a second time by a different one.
+     *
+     * Completed is still checked first. A session that succeeded while the
+     * resident was away must settle, not be replaced.
      */
-    if (decision.provider === "BKASH" && decision.providerPaymentId) {
-      const state = await queryBkashPayment(decision.providerPaymentId).catch(() => null);
-
-      if (state && bkashSucceeded(state)) {
-        return badRequest("That payment already went through. Refresh to see it settled.");
+    if (decision.provider === "BKASH") {
+      if (decision.providerPaymentId) {
+        const state = await queryBkashPayment(decision.providerPaymentId).catch(() => null);
+        if (state && bkashSucceeded(state)) {
+          return badRequest("That payment already went through. Refresh to see it settled.");
+        }
       }
 
-      if (!state || state.transactionStatus !== "Initiated") {
+      // A bKash session counts as spent once it exists, not merely once the
+      // flag was written: returning the URL from this route IS the hand-off,
+      // and rows created before that flag existed still had theirs handed out.
+      if (decision.handedOff || decision.providerPaymentId) {
         await prisma.payment.update({
           where: { id: decision.paymentId },
-          data: {
-            status: "FAILED",
-            providerPayload: { reason: "bkash-session-expired" },
-          },
+          data: { status: "FAILED", providerPayload: { reason: "bkash-session-already-opened" } },
         });
-        return badRequest("That bKash session expired. Tap Pay again to start a fresh one.");
+        // Fall through to open a brand new checkout below, rather than making
+        // the resident tap Pay a third time to get somewhere that works.
+        return openFreshCheckout({
+          user,
+          houseId: share.expense.houseId,
+          shareId: share.id,
+          amount: share.amount,
+          amountPaisa,
+          description: `${share.expense.title} — your share`,
+          origin,
+          method: method as PaymentMethod,
+        });
       }
     }
+
+    // First hand-off of a URL we created but never sent anyone to.
+    await prisma.payment.update({
+      where: { id: decision.paymentId },
+      data: {
+        providerPayload: { redirectUrl: decision.redirectUrl, handedOff: true },
+      },
+    });
 
     return ok({ paymentId: decision.paymentId, redirectUrl: decision.redirectUrl, resumed: true });
   }
@@ -276,40 +308,104 @@ export const POST = withUser(async (user, req: Request) => {
     return ok({ paymentId, awaitingConfirmation: true }, 201);
   }
 
+  return openCheckoutFor({
+    paymentId,
+    user,
+    amountPaisa,
+    description: `${share.expense.title} — your share`,
+    origin,
+    method: method as PaymentMethod,
+  });
+});
+
+/**
+ * Opens a gateway session against an EXISTING payment row and stores where it
+ * sent the resident.
+ *
+ * `handedOff` is recorded with the URL because a bKash checkout can only be
+ * opened once — see the resume path above, which reads it to decide whether a
+ * URL is still worth offering or has been spent.
+ */
+async function openCheckoutFor(args: {
+  paymentId: string;
+  user: SessionUser;
+  amountPaisa: number;
+  description: string;
+  origin: string;
+  method: PaymentMethod;
+}) {
   let session;
   try {
     session = await createCheckout({
-      paymentId,
-      amountPaisa,
+      paymentId: args.paymentId,
+      amountPaisa: args.amountPaisa,
       currency: "BDT",
-      description: `${share.expense.title} — your share`,
-      origin,
-      method: method as PaymentMethod,
+      description: args.description,
+      origin: args.origin,
+      method: args.method,
       // bKash wants something identifying the payer. Their own number is the
       // useful answer when we have it; the user id is a stable stand-in when
       // we do not, and neither is trusted for anything.
-      payerReference: user.profile.phone ?? user.id,
+      payerReference: args.user.profile.phone ?? args.user.id,
     });
   } catch (error) {
     // Marked FAILED rather than deleted, so a resident who says "I tried to pay
     // and it broke" has something to point at.
     await prisma.payment.update({
-      where: { id: paymentId },
+      where: { id: args.paymentId },
       data: { status: "FAILED", providerPayload: { error: String(error) } },
     });
     throw new HttpError("Could not reach the payment gateway. Nothing was charged.", 503);
   }
 
   await prisma.payment.update({
-    where: { id: paymentId },
+    where: { id: args.paymentId },
     data: {
       provider: session.provider,
       providerPaymentId: session.providerPaymentId,
-      // Stored so a concurrent or resumed request returns the SAME checkout
-      // rather than opening a second one against the same bill.
-      providerPayload: { redirectUrl: session.redirectUrl },
+      providerPayload: { redirectUrl: session.redirectUrl, handedOff: true },
     },
   });
 
-  return ok({ paymentId, redirectUrl: session.redirectUrl }, 201);
-});
+  return ok({ paymentId: args.paymentId, redirectUrl: session.redirectUrl }, 201);
+}
+
+/**
+ * Creates a NEW payment row and opens a checkout on it.
+ *
+ * Used when a bKash session has been spent: the old row is retired and the
+ * resident gets a working checkout from the same tap, rather than an error
+ * telling them to try what they just tried.
+ */
+async function openFreshCheckout(args: {
+  user: SessionUser;
+  houseId: string;
+  shareId: string;
+  amount: Prisma.Decimal;
+  amountPaisa: number;
+  description: string;
+  origin: string;
+  method: PaymentMethod;
+}) {
+  const created = await prisma.payment.create({
+    data: {
+      userId: args.user.id,
+      houseId: args.houseId,
+      expenseShareId: args.shareId,
+      provider: providerForMethod(args.method),
+      status: "INITIATED",
+      amount: args.amount,
+      currency: "BDT",
+    },
+    select: { id: true },
+  });
+
+  return openCheckoutFor({
+    paymentId: created.id,
+    user: args.user,
+    amountPaisa: args.amountPaisa,
+    description: args.description,
+    origin: args.origin,
+    method: args.method,
+  });
+}
