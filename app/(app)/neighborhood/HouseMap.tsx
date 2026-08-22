@@ -103,16 +103,59 @@ export function HouseMap({
     instance.on("touchcancel", cancelTouch);
 
     instance.on("load", () => setReady(true));
+
     // A basemap that fails to load (offline, provider down, key revoked) must
     // not take the page with it. Swap in the blank style so the pins — which
     // are DOM markers drawn on top, not part of the style — still render, and
     // say why the streets are missing rather than showing a mute grey box.
+    //
+    // What counts as "failed" is the whole difficulty. MapLibre raises `error`
+    // for anything it did not like, and most of it is survivable: one tile that
+    // 404s, an icon missing from the sprite, or — the one that actually bit us
+    // — a layer in the provider's own style pointing at a source-layer their
+    // tileset does not ship. Barikoi's osm-liberty does exactly that
+    // ("Barikoi Poi icons" references source-layer "office_11"), so every load
+    // raised one error while the style was still settling, and the old check
+    // below — any error, as long as isStyleLoaded() was not true yet — threw
+    // away a perfectly good basemap on it, every single time, for everyone.
+    //
+    // The only thing worth blanking for is the style document itself never
+    // arriving. That is what styleLoaded/the timeout below track; individual
+    // resource errors are logged and otherwise ignored.
+    const styleLoaded = { current: false };
+    const failed = { current: false };
+    let styleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const declareFailure = () => {
+      if (failed.current || styleLoaded.current) return;
+      failed.current = true;
+      setStyleFailed(true);
+      instance.setStyle(BLANK_STYLE);
+    };
+
+    instance.on("style.load", () => {
+      styleLoaded.current = true;
+      if (styleTimer) clearTimeout(styleTimer);
+      styleTimer = null;
+    });
+
+    // Backstop for the failure no error event describes usefully: a style
+    // request that hangs, or one that fails at the network layer, where
+    // MapLibre reports a bare Error indistinguishable from the harmless
+    // validation warnings above. Without it a dead provider leaves a grey box
+    // and no explanation for as long as the tab is open.
+    styleTimer = setTimeout(declareFailure, 12000);
+
     instance.on("error", (event: any) => {
       const message = event.error?.message ?? String(event);
       console.warn("[m2.4 map]", message);
-      if (!instance.isStyleLoaded() && !styleFailed) {
-        setStyleFailed(true);
-        instance.setStyle(BLANK_STYLE);
+      // Only an HTTP refusal counts: a numeric status means a server answered
+      // and said no — our own proxy returning 401/403/429/503, which is a real
+      // "there will be no basemap". `sourceId` marks a source or tile problem,
+      // which is never fatal on its own, and a status-less Error is either a
+      // style-spec warning or a network fault, both left to the timer above.
+      if (!styleLoaded.current && !event.sourceId && typeof event.error?.status === "number") {
+        declareFailure();
       }
     });
 
@@ -120,6 +163,7 @@ export function HouseMap({
 
     return () => {
       cancelTouch();
+      if (styleTimer) clearTimeout(styleTimer);
       instance.remove();
       map.current = null;
     };
